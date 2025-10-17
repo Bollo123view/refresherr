@@ -1,0 +1,11 @@
+﻿.env
+.env.*
+/data/*
+!/data/.gitkeep
+/config/*.local.yaml
+*.log
+__pycache__/
+*.pyc
+.DS_Store
+.vscode/
+.idea/

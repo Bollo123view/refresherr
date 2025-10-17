@@ -1,0 +1,19 @@
+﻿# Refresher configuration
+scan:
+  roots:
+    - /opt/media/jelly/tv
+    - /opt/media/jelly/4k
+    - /opt/media/jelly/hayu
+    - /opt/media/jelly/doc
+  rewrites:
+    - from: /mnt
+      to: /opt/media
+  mount_checks:
+    - /opt/media/remote/realdebrid
+notifications:
+  discord_webhook_env: DISCORD_WEBHOOK
+relay:
+  base_env: RELAY_BASE
+  token_env: RELAY_TOKEN
+history:
+  db_path_env: DATA_DIR
