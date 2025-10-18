@@ -5,7 +5,6 @@ from .mounts import is_mount_present
 from .notifier import post_discord_simple, post_discord_file, discord_webhook_url_from_env
 from .relay_client import relay_from_env
 from .history import add_events
-from .store import init_schema, log_run, add_items, upsert_action, mark_fired  # <-- NEW
 
 @dataclass
 class Config:
@@ -35,6 +34,12 @@ def rewrite_target(target: str, rewrites: List[Tuple[str,str]]) -> str:
     return target
 
 def _extract_season_from_path(path: str):
+    """
+    Detect a season number from segments like:
+      - 'Season 4', 'Season_4', 'Season-04'
+      - 'S04', 's04'
+    Returns int or None.
+    """
     parts = re.split(r"[\\/]", path)
     for seg in parts:
         m = re.match(r"(?i)^season[ _-]?(\d{1,2})$", seg)
@@ -65,9 +70,6 @@ def classify(path: str):
     return ("tv", os.path.basename(base), season)
 
 def scan_once(cfg: Config, dryrun: bool = True) -> dict:
-    # ensure DB schema
-    init_schema()
-
     # Mount checks
     for m in cfg.mount_checks:
         if not is_mount_present(m):
@@ -97,7 +99,7 @@ def scan_once(cfg: Config, dryrun: bool = True) -> dict:
     w.writerow(["Type","Name","Season","Path","Target","Resolved","Scope","FindLink"])
     now = int(time.time())
     evt_rows = []
-    unique_actions = {}  # key: (kind,name,season_or_None) -> (label, url)
+    unique_actions = {}  # key -> (label, url)
 
     webhook = discord_webhook_url_from_env(cfg.discord_env)
     base_url, token = relay_from_env(cfg.relay_base_env, cfg.relay_token_env)
@@ -117,6 +119,7 @@ def scan_once(cfg: Config, dryrun: bool = True) -> dict:
         w.writerow([kind, name, season or "", p, t, r, scope, url])
         evt_rows.append((now, p, t, kind, name, "detected", "dryrun" if dryrun else "delete"))
 
+        # group action key: TV/Hayu grouped by season if present; movies grouped by title
         key = (kind, name, season if kind in ("tv","hayu") else None)
         if key not in unique_actions:
             label = f"{name} – Season {season}" if (kind in ("tv","hayu") and season) else name
@@ -125,16 +128,6 @@ def scan_once(cfg: Config, dryrun: bool = True) -> dict:
     csv_bytes = buf.getvalue().encode("utf-8")
 
     summary = {"ok": True, "broken_count": len(broken), "dryrun": dryrun}
-
-    # Persist run + items
-    run_id = log_run(dryrun, len(broken))
-    if broken:
-        add_items(run_id, [(p, t, r, kind, name, season) for (p, t, r, kind, name, season) in broken])
-
-    # Upsert actions
-    for (kind, name, season_key), (_, url) in unique_actions.items():
-        scope = "season" if (kind in ("tv","hayu") and season_key) else ("series" if kind in ("tv","hayu") else "movie")
-        upsert_action(kind, name, season_key, scope, url)
 
     # Post to Discord (summary + grouped quick actions + full CSV)
     if webhook:
@@ -148,24 +141,9 @@ def scan_once(cfg: Config, dryrun: bool = True) -> dict:
         if broken:
             post_discord_file(webhook, "refresher_broken.csv", csv_bytes, "Full report")
 
-    # History DB (legacy events)
+    # History DB
     if evt_rows:
         add_events(evt_rows)
-
-    # Auto-trigger searches via relay (one per unique action)
-    autofind = os.environ.get("AUTOFIND", "false").lower() == "true"
-    if autofind and unique_actions:
-        for (kind, name, season_key), (_, url) in unique_actions.items():
-            if not url:
-                continue
-            ok = True
-            try:
-                requests.get(url, timeout=15)
-                time.sleep(2)  # be gentle to Sonarr/Radarr
-            except requests.RequestException:
-                ok = False
-            scope = "season" if (kind in ("tv","hayu") and season_key) else ("series" if kind in ("tv","hayu") else "movie")
-            mark_fired(kind, name, season_key, scope, ok)
 
     # Delete pass (if enabled)
     if not dryrun:
@@ -190,4 +168,3 @@ def run_loop():
     while True:
         scan_once(cfg, dryrun=dry)
         time.sleep(interval)
-

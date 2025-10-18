@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+﻿from flask import Flask, request, jsonify
 import os, requests, urllib.parse, logging, re
 
 app = Flask(__name__)
@@ -30,12 +30,8 @@ def find():
     if SECRET and token != SECRET:
         return bad("unauthorized", 403)
 
-    mtype  = (request.args.get("type") or "").strip()
-    term   = (request.args.get("term") or "").strip()
-    scope  = (request.args.get("scope") or "series").strip().lower()
-    season = request.args.get("season")
-    epnum  = request.args.get("ep")
-
+    mtype = (request.args.get("type") or "").strip()
+    term  = (request.args.get("term") or "").strip()
     if not mtype or not term:
         return bad("missing type or term")
 
@@ -43,8 +39,8 @@ def find():
     if not inst:
         return bad("invalid type")
     base = (inst.get("url") or "").rstrip("/")
-    api  = inst.get("api") or ""
-    kind = inst.get("kind") or ""
+    api  = (inst.get("api") or "")
+    kind = (inst.get("kind") or "")
     if not base or not api or not kind:
         return bad("instance misconfigured", 500)
 
@@ -53,7 +49,6 @@ def find():
 
     try:
         if kind == "sonarr":
-            # Resolve series in library
             r = requests.get(f"{base}/api/v3/series", headers=headers, timeout=10)
             r.raise_for_status()
             lib = r.json()
@@ -76,49 +71,12 @@ def find():
                                 break
             if not series:
                 return bad(f"series '{term}' not in library (add to Sonarr first)", 404)
-
             series_id = series["id"]
+            r = requests.post(f"{base}/api/v3/command", headers=headers,
+                              json={"name": "SeriesSearch", "seriesId": series_id}, timeout=10)
+            r.raise_for_status()
+            return jsonify({"status": f"SeriesSearch started for '{term}'", "seriesId": series_id})
 
-            if scope == "series":
-                r = requests.post(f"{base}/api/v3/command", headers=headers,
-                                  json={"name": "SeriesSearch", "seriesId": series_id}, timeout=10)
-                r.raise_for_status()
-                return jsonify({"status": f"SeriesSearch started for '{term}'", "seriesId": series_id})
-
-            if scope == "season":
-                try:
-                    season_number = int(season)
-                except (TypeError, ValueError):
-                    return bad("season must be an integer when scope=season")
-                r = requests.post(f"{base}/api/v3/command", headers=headers,
-                                  json={"name": "SeasonSearch", "seriesId": series_id, "seasonNumber": season_number},
-                                  timeout=10)
-                r.raise_for_status()
-                return jsonify({"status": f"SeasonSearch S{season_number:02d} for '{term}'",
-                                "seriesId": series_id, "season": season_number})
-
-            if scope == "episode":
-                try:
-                    season_number = int(season)
-                    ep_number = int(epnum)
-                except (TypeError, ValueError):
-                    return bad("season and ep must be integers when scope=episode")
-                r = requests.get(f"{base}/api/v3/episode?seriesId={series_id}", headers=headers, timeout=10)
-                r.raise_for_status()
-                eps = r.json()
-                target = [e for e in eps if e.get("seasonNumber")==season_number and e.get("episodeNumber")==ep_number]
-                if not target:
-                    return bad(f"episode S{season_number}E{ep_number} not found in library for '{term}'", 404)
-                episode_ids = [e["id"] for e in target]
-                r = requests.post(f"{base}/api/v3/command", headers=headers,
-                                  json={"name": "EpisodeSearch", "episodeIds": episode_ids}, timeout=10)
-                r.raise_for_status()
-                return jsonify({"status": f"EpisodeSearch S{season_number:02d}E{ep_number:02d} for '{term}'",
-                                "seriesId": series_id, "season": season_number, "episode": ep_number})
-
-            return bad("invalid scope; use series|season|episode")
-
-        # Radarr (unchanged)
         r = requests.get(f"{base}/api/v3/movie", headers=headers, timeout=10)
         r.raise_for_status()
         movies = r.json()
