@@ -1,20 +1,4 @@
-.env
-.env.*
-*.key
-*.crt
-*.pem
-**/config/**
-**/secrets/**
-**/certs/**
-.DS_Store
-*.log
-node_modules/
-*.sqlite
-data/
-tmp/
-**/jellyfin/cache/**
-**/jellyfin/transcodes/**
-# Env files (local secrets)
+# Env files (secrets – do not commit)
 .env
 .env.*
 *.env
@@ -22,3 +6,7 @@ tmp/
 **/.env.*
 .envrc
 .env.local
+
+# Runtime / local data
+data/
+*.log
