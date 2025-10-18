@@ -1,193 +1,373 @@
-import os, time, csv, io, yaml, re, urllib.parse, requests
-from dataclasses import dataclass
-from typing import List, Tuple
-from .mounts import is_mount_present
-from .notifier import post_discord_simple, post_discord_file, discord_webhook_url_from_env
-from .relay_client import relay_from_env
-from .history import add_events
-from .store import init_schema, log_run, add_items, upsert_action, mark_fired  # <-- NEW
+# app/refresher/core/scanner.py
+from __future__ import annotations
 
-@dataclass
-class Config:
-    roots: List[str]
-    rewrites: List[Tuple[str,str]]
-    mount_checks: List[str]
-    discord_env: str
-    relay_base_env: str
-    relay_token_env: str
+import os
+import re
+import sys
+import time
+import json
+import stat
+import logging
+from typing import Dict, Iterable, List, Optional
 
-def load_config() -> Config:
-    cfg_path = os.environ.get("CONFIG_FILE", "/config/config.yaml")
-    with open(cfg_path, "r", encoding="utf-8") as f:
-        raw = yaml.safe_load(f) or {}
-    roots = raw.get("scan", {}).get("roots", [])
-    rewrites = [(x.get("from"), x.get("to")) for x in raw.get("scan", {}).get("rewrites", [])]
-    mounts = raw.get("scan", {}).get("mount_checks", [])
-    discord_env = raw.get("notifications", {}).get("discord_webhook_env", "DISCORD_WEBHOOK")
-    relay_base_env = raw.get("relay", {}).get("base_env", "RELAY_BASE")
-    relay_token_env = raw.get("relay", {}).get("token_env", "RELAY_TOKEN")
-    return Config(roots, rewrites, mounts, discord_env, relay_base_env, relay_token_env)
+try:
+    import yaml  # type: ignore
+except Exception:
+    print("ERROR: pyyaml is required. pip install pyyaml", file=sys.stderr)
+    raise
 
-def rewrite_target(target: str, rewrites: List[Tuple[str,str]]) -> str:
-    for src, dst in rewrites:
-        if src and target.startswith(src):
-            return target.replace(src, dst, 1)
-    return target
+# ----- Optional Discord notifier (graceful if absent) ------------------------
+def _import_notifier():
+    try:
+        from refresher.core.notifier import post_discord  # type: ignore
+        return post_discord
+    except Exception:
+        try:
+            from app.refresher.core.notifier import post_discord  # type: ignore
+            return post_discord
+        except Exception:
+            return None
 
-def _extract_season_from_path(path: str):
-    parts = re.split(r"[\\/]", path)
-    for seg in parts:
-        m = re.match(r"(?i)^season[ _-]?(\d{1,2})$", seg)
-        if m:
-            return int(m.group(1))
-        m2 = re.match(r"(?i)^s(\d{2})$", seg)
-        if m2:
-            return int(m2.group(1))
-    return None
+post_discord = _import_notifier()
 
-def classify(path: str):
-    """
-    Return (kind, name, season_number|None)
-    kind: tv | hayu | doc | 4k
-    """
-    season = _extract_season_from_path(path)
+# ----- Store (DB) import (graceful fallback to no-op if missing) -------------
+class _NoDB:
+    def init_schema(self): pass
+    def begin_scan(self) -> Optional[int]: return None
+    def add_items(self, scan_id: int, items: List[Dict]): pass
+    def finalize_scan(self, scan_id: int, summary: Dict): pass
 
-    if "/jelly/4k/" in path:
-        name = os.path.basename(os.path.dirname(path))
-        return ("4k", name, season)
-    if "/jelly/doc/" in path:
-        name = os.path.basename(os.path.dirname(path))
-        return ("doc", name, season)
-    if "/jelly/hayu/" in path:
-        base = os.path.dirname(os.path.dirname(path))
-        return ("hayu", os.path.basename(base), season)
-    base = os.path.dirname(os.path.dirname(path))
-    return ("tv", os.path.basename(base), season)
+def _import_store():
+    try:
+        from refresher.core import store  # type: ignore
+        return store
+    except Exception:
+        try:
+            from app.refresher.core import store  # type: ignore
+            return store
+        except Exception:
+            return _NoDB()
 
-def scan_once(cfg: Config, dryrun: bool = True) -> dict:
-    # ensure DB schema
-    init_schema()
+store = _import_store()
 
-    # Mount checks
-    for m in cfg.mount_checks:
-        if not is_mount_present(m):
-            return {"ok": False, "error": f"mount not present: {m}"}
+log = logging.getLogger("refresher.scanner")
+logging.basicConfig(
+    level=os.environ.get("REFRESHER_LOG_LEVEL", "INFO"),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 
-    broken = []
-    for root in cfg.roots:
-        if not os.path.isdir(root):
+# ===== Config ================================================================
+
+DEFAULT_CONFIG_PATH = "/config/config.yaml"  # matches your compose bind
+
+def load_config(path: str = DEFAULT_CONFIG_PATH) -> Dict:
+    """Load YAML config. Returns {} if missing so we can still run."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+        return raw
+    except FileNotFoundError:
+        log.warning("Config not found at %s; proceeding with env defaults", path)
+        return {}
+    except Exception as e:
+        log.error("Failed to load config %s: %s", path, e)
+        return {}
+
+# ===== Mount detection =======================================================
+
+def _is_path_mounted_linux(target: str) -> bool:
+    """Check /proc/self/mountinfo for an exact mountpoint match."""
+    target = os.path.abspath(target)
+    try:
+        with open("/proc/self/mountinfo", "r", encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except Exception:
+        # Fallback: device id differs from parent
+        st = os.stat(target)
+        parent = os.path.abspath(os.path.join(target, ".."))
+        st_parent = os.stat(parent)
+        return st.st_dev != st_parent.st_dev
+
+    for line in lines:
+        try:
+            left, _, _right = line.partition(" - ")
+            parts = left.split()
+            if len(parts) >= 5:
+                mp = parts[4]
+                if os.path.abspath(mp) == target:
+                    return True
+        except Exception:
             continue
-        for dirpath, _, filenames in os.walk(root):
-            for name in filenames:
-                full = os.path.join(dirpath, name)
-                if not os.path.islink(full):
-                    continue
-                try:
-                    target = os.readlink(full)
-                except OSError:
-                    target = ""
-                resolved = rewrite_target(target, cfg.rewrites)
-                if not os.path.exists(resolved):
-                    kind, showname, season = classify(full)
-                    broken.append((full, target, resolved, kind, showname, season))
+    return False
 
-    # Prepare CSV + unique actions (one per (kind,name,season) for TV/Hayu; one per movie for Radarr)
-    buf = io.StringIO()
-    w = csv.writer(buf)
-    w.writerow(["Type","Name","Season","Path","Target","Resolved","Scope","FindLink"])
-    now = int(time.time())
-    evt_rows = []
-    unique_actions = {}  # key: (kind,name,season_or_None) -> (label, url)
+def is_mount_present(path: str) -> bool:
+    try:
+        if not os.path.isdir(path):
+            return False
+        return _is_path_mounted_linux(path)
+    except FileNotFoundError:
+        return False
+    except Exception as e:
+        log.warning("Mount check fallback for %s due to: %s", path, e)
+        try:
+            os.listdir(path)
+            return True
+        except Exception:
+            return False
 
-    webhook = discord_webhook_url_from_env(cfg.discord_env)
-    base_url, token = relay_from_env(cfg.relay_base_env, cfg.relay_token_env)
+# ===== Symlink discovery & classification ====================================
 
-    def build_link(kind: str, name: str, season: int|None) -> tuple[str,str]:
-        link_type = {"tv":"sonarr_tv","hayu":"sonarr_hayu","doc":"radarr_doc","4k":"radarr_4k"}.get(kind,"sonarr_tv")
-        if not (base_url and token):
-            return ("series" if kind in ("tv","hayu") else "movie", "")
-        qname = urllib.parse.quote(name)
-        if kind in ("tv","hayu") and season:
-            return ("season", f"{base_url}?type={link_type}&term={qname}&scope=season&season={season}&token={token}")
-        scope = "series" if kind in ("tv","hayu") else "movie"
-        return (scope, f"{base_url}?type={link_type}&term={qname}&scope={scope}&token={token}")
+VIDEO_EXTS = {".mkv", ".mp4", ".avi", ".mov", ".m4v", ".ts"}
 
-    for (p, t, r, kind, name, season) in broken:
-        scope, url = build_link(kind, name, season)
-        w.writerow([kind, name, season or "", p, t, r, scope, url])
-        evt_rows.append((now, p, t, kind, name, "detected", "dryrun" if dryrun else "delete"))
-
-        key = (kind, name, season if kind in ("tv","hayu") else None)
-        if key not in unique_actions:
-            label = f"{name} – Season {season}" if (kind in ("tv","hayu") and season) else name
-            unique_actions[key] = (label, url)
-
-    csv_bytes = buf.getvalue().encode("utf-8")
-
-    summary = {"ok": True, "broken_count": len(broken), "dryrun": dryrun}
-
-    # Persist run + items
-    run_id = log_run(dryrun, len(broken))
-    if broken:
-        add_items(run_id, [(p, t, r, kind, name, season) for (p, t, r, kind, name, season) in broken])
-
-    # Upsert actions
-    for (kind, name, season_key), (_, url) in unique_actions.items():
-        scope = "season" if (kind in ("tv","hayu") and season_key) else ("series" if kind in ("tv","hayu") else "movie")
-        upsert_action(kind, name, season_key, scope, url)
-
-    # Post to Discord (summary + grouped quick actions + full CSV)
-    if webhook:
-        msg = f"🧪 refresher scan (dry-run={str(dryrun).lower()}): {len(broken)} broken symlinks"
-        post_discord_simple(webhook, msg)
-        if unique_actions:
-            lines = ["🔎 Quick actions (grouped):"]
-            for (label, url) in list(unique_actions.values())[:25]:
-                lines.append(f"• [{label}]({url})" if url else f"• {label}")
-            post_discord_simple(webhook, "\n".join(lines))
-        if broken:
-            post_discord_file(webhook, "refresher_broken.csv", csv_bytes, "Full report")
-
-    # History DB (legacy events)
-    if evt_rows:
-        add_events(evt_rows)
-
-    # Auto-trigger searches via relay (one per unique action)
-    autofind = os.environ.get("AUTOFIND", "false").lower() == "true"
-    if autofind and unique_actions:
-        for (kind, name, season_key), (_, url) in unique_actions.items():
-            if not url:
+def iter_symlinks(root: str) -> Iterable[str]:
+    """Yield absolute paths to symlinks under root (recursive)."""
+    root = os.path.abspath(root)
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for fn in filenames:
+            p = os.path.join(dirpath, fn)
+            try:
+                st = os.lstat(p)
+            except FileNotFoundError:
                 continue
-            ok = True
-            try:
-                requests.get(url, timeout=15)
-                time.sleep(2)  # be gentle to Sonarr/Radarr
-            except requests.RequestException:
-                ok = False
-            scope = "season" if (kind in ("tv","hayu") and season_key) else ("series" if kind in ("tv","hayu") else "movie")
-            mark_fired(kind, name, season_key, scope, ok)
+            if stat.S_ISLNK(st.st_mode):
+                yield p
 
-    # Delete pass (if enabled)
-    if not dryrun:
-        for (p, _, _, _, _, _) in broken:
+_title_scrub = re.compile(r"[._]+")
+_episode_pat = re.compile(
+    r"""(?ix)
+    (?:s(?P<season>\d{1,2})[ ._-]*e(?P<episode>\d{1,3}))
+    |
+    (?:season[ ._-]?(?P<season2>\d{1,2})[ ._-]*episode[ ._-]?(?P<episode2>\d{1,3}))
+    """
+)
+
+def classify_symlink(link_path: str) -> Dict:
+    """Classify a symlink: resolve target, ext, best-effort search query."""
+    item: Dict = {
+        "path": link_path,
+        "type": "symlink",
+        "broken": False,
+        "ext": os.path.splitext(link_path)[1].lower(),
+        "target": None,
+        "query": None,
+        "season": None,
+        "episode": None,
+        "size_bytes": None,
+        "mtime_ns": None,
+    }
+    try:
+        target = os.readlink(link_path)
+        if not os.path.isabs(target):
+            target = os.path.abspath(os.path.join(os.path.dirname(link_path), target))
+        item["target"] = target
+        if not os.path.exists(target):
+            item["broken"] = True
+        else:
             try:
-                os.remove(p)
-            except OSError:
+                st = os.stat(target)
+                item["size_bytes"] = st.st_size
+                item["mtime_ns"] = getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9))
+            except Exception:
+                item["size_bytes"] = None
+                item["mtime_ns"] = None
+    except OSError:
+        item["broken"] = True
+
+    base = os.path.basename(link_path)
+    name = os.path.splitext(base)[0]
+    m = _episode_pat.search(name)
+    if m:
+        season = m.group("season") or m.group("season2")
+        episode = m.group("episode") or m.group("episode2")
+        head = _episode_pat.sub("", name).strip("-_. ")
+        head = _title_scrub.sub(" ", head).strip()
+        if season and episode:
+            item["season"] = int(season)
+            item["episode"] = int(episode)
+            item["query"] = f"{head} S{int(season):02d}E{int(episode):02d}"
+    else:
+        item["query"] = _title_scrub.sub(" ", name).strip()
+
+    return item
+
+# ===== Relay "find" link builder =============================================
+
+def normalise_base(url: str) -> str:
+    if not url:
+        return url
+    url = url.rstrip("/")
+    if url.endswith("/find"):
+        url = url[:-5]
+    return url
+
+def build_find_link(base: str, token: str, find_type: str, term: str) -> str:
+    from urllib.parse import urlencode, quote
+    base = normalise_base(base)
+    qs = urlencode({"type": find_type, "term": term, "token": token}, quote_via=quote)
+    return f"{base}/find?{qs}"
+
+# ===== Scan Once + DB persistence ============================================
+
+def scan_once(config_path: str = DEFAULT_CONFIG_PATH) -> Dict:
+    """
+    Perform a single scan (non-destructive):
+      - Verify mount presence
+      - Walk symlinks under SYMLINK_ROOT
+      - Classify each; collect broken ones
+      - Persist snapshot/history via store (if present)
+      - Return summary + prebuilt 'find' actions
+    """
+    t0 = time.time()
+    cfg = load_config(config_path)
+
+    env = os.environ
+    mount_root = env.get("MOUNT_ROOT") or cfg.get("paths", {}).get("mount_root") or "/mnt/rd"
+    symlink_root = env.get("SYMLINK_ROOT") or cfg.get("paths", {}).get("symlink_root") or "/mnt/symlinks"
+
+    relay_base = env.get("RELAY_BASE") or cfg.get("relay", {}).get("base", "")
+    relay_token_env = cfg.get("relay", {}).get("token_env", "RELAY_TOKEN")
+    relay_token = env.get(relay_token_env, "")
+
+    include_exts: set = set(map(str.lower, cfg.get("scan", {}).get("extensions", []))) or VIDEO_EXTS
+    include_exts = {e if e.startswith(".") else f".{e}" for e in include_exts}
+
+    # Mount check
+    mount_ok = is_mount_present(mount_root)
+    if not mount_ok:
+        log.warning("Mount %s not present. Aborting scan.", mount_root)
+        return {"ok": False, "reason": "mount_absent", "mount_root": mount_root}
+
+    # Begin DB scan (if store available)
+    scan_id = None
+    try:
+        store.init_schema()
+        scan_id = getattr(store, "begin_scan", lambda: None)()
+    except Exception:
+        scan_id = None
+
+    # Walk symlinks
+    items: List[Dict] = []
+    count_all = 0
+    broken: List[Dict] = []
+    ok_files = 0
+    for link in iter_symlinks(symlink_root):
+        count_all += 1
+        item = classify_symlink(link)
+        if item["ext"] and item["ext"] not in include_exts:
+            continue
+        items.append(item)
+        if item["broken"]:
+            broken.append(item)
+        else:
+            ok_files += 1
+
+    # Persist items into DB (store handles ok/broken/repairing + FTS)
+    if scan_id is not None and hasattr(store, "add_items"):
+        try:
+            store.add_items(scan_id, items)  # 'repairing' is preserved inside store
+        except Exception:
+            pass
+
+    # Summarise + duration
+    summary = {
+        "ok": True,
+        "mount_ok": mount_ok,
+        "scanned": count_all,
+        "ok_files": ok_files,
+        "broken": len(broken),
+        "duration_s": round(time.time() - t0, 3),
+    }
+
+    if scan_id is not None and hasattr(store, "finalize_scan"):
+        try:
+            store.finalize_scan(scan_id, summary)
+        except Exception:
+            pass
+
+    # Prepare “find” actions (not executed here)
+    actions: List[Dict] = []
+    if relay_base and relay_token and broken:
+        for b in broken:
+            q = (b.get("query") or os.path.basename(b["path"]))
+            find_type = "sonarr_tv" if (b.get("season") is not None or " S" in (q or "").upper()) else "radarr_doc"
+            url = build_find_link(relay_base, relay_token, find_type, q)
+            payload = {
+                "kind": "find",
+                "query": q,
+                "type": find_type,
+                "url": url,
+                "path": b["path"],
+            }
+            actions.append(payload)
+            # If your store has upsert_action you can persist these:
+            try:
+                if hasattr(store, "upsert_action"):
+                    store.upsert_action(kind="find", key=b["path"], payload=json.dumps(payload))
+            except Exception:
                 pass
 
-    return summary
+    # Optional Discord summary — ONLY when broken > 0
+    notify = str(os.getenv("DISCORD_NOTIFY", "0")).strip().lower() in {"1", "true", "yes", "on"}
+    if notify and summary["broken"] > 0 and post_discord:
+        msg = (
+            f"Refresher scan: **{summary['scanned']}** symlinks | "
+            f"✅ {summary['ok_files']} ok | ❌ {summary['broken']} broken | "
+            f"mount_ok={summary.get('mount_ok', True)}"
+        )
+        if actions:
+            msg += f" | queued actions: {len(actions)}"
+        try:
+            post_discord(msg)
+        except Exception:
+            pass
 
-def one_scan():
-    cfg = load_config()
-    dry = os.environ.get("DRYRUN","true").lower() == "true"
-    res = scan_once(cfg, dryrun=dry)
-    print(res)
+    # Friendly log
+    if broken:
+        log.info("Scan summary: %d symlinks; %d ok; %d broken", count_all, ok_files, len(broken))
+        for a in actions[:10]:
+            log.info("Broken: %s -> queued find: %s", a["path"], a["url"])
+        if len(actions) > 10:
+            log.info("…and %d more", len(actions) - 10)
+    else:
+        log.info("Scan summary: %d symlinks; %d ok; 0 broken", count_all, ok_files)
 
-def run_loop():
-    cfg = load_config()
-    dry = os.environ.get("DRYRUN","true").lower() == "true"
-    interval = int(os.environ.get("SCAN_INTERVAL","86400"))
+    return {"ok": True, "summary": summary, "actions": actions}
+
+# ===== CLI entrypoint + legacy shims =========================================
+
+def _as_bool(v: Optional[str]) -> bool:
+    return str(v or "").strip().lower() in {"1", "true", "yes", "on"}
+
+def main():
+    import argparse
+    ap = argparse.ArgumentParser(description="Refresher scanner (single run)")
+    ap.add_argument("--config", default=DEFAULT_CONFIG_PATH, help="Path to config.yaml")
+    ap.add_argument("--json", action="store_true", help="Emit JSON summary to stdout")
+    args = ap.parse_args()
+
+    res = scan_once(args.config)
+    if args.json:
+        print(json.dumps(res, indent=2, sort_keys=True))
+    if not res.get("ok"):
+        sys.exit(2 if res.get("reason") == "mount_absent" else 1)
+
+# Legacy wrappers expected by cli.py
+def one_scan(config_path: Optional[str] = None):
+    return scan_once(config_path or DEFAULT_CONFIG_PATH)
+
+def run_loop(interval_seconds: int = 300, config_path: Optional[str] = None):
+    cfg_path = config_path or DEFAULT_CONFIG_PATH
+    try:
+        interval_seconds = int(interval_seconds)
+    except Exception:
+        interval_seconds = 300
     while True:
-        scan_once(cfg, dryrun=dry)
-        time.sleep(interval)
+        try:
+            scan_once(cfg_path)
+        except Exception as e:
+            log.exception("run_loop scan error: %s", e)
+        time.sleep(interval_seconds)
+
+if __name__ == "__main__":
+    main()
 

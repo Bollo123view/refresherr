@@ -1,0 +1,5 @@
+# Replace any Discord webhook URL occurrences
+regex:https://discord\.com/api/webhooks/[0-9A-Za-z/_-]+==>https://discord.com/api/webhooks/REDACTED/REDACTED
+
+# Replace the specific leaked relay token everywhere
+rpb31wvb7fRnppjLmYK5X4Siwz8a==>REDACTED_TOKEN

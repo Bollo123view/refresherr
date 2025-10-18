@@ -1,4 +1,6 @@
-﻿version: "3.9"
+# docker-compose.yml
+version: "3.9"
+
 services:
   refresher:
     build:
@@ -6,18 +8,29 @@ services:
     container_name: refresher
     env_file:
       - ./.env
+    environment:
+      - SYMLINK_ROOT=/opt/media/jelly
+      - MOUNT_ROOT=/mnt/remote/realdebrid
+      - REFRESHER_LOG_LEVEL=INFO
     volumes:
-      - ./config:/config
+      - ./config:/app/config 
       - ./data:/data
       - /opt/media:/opt/media:rw
+      # Left side must be the HOST path where the real files live:
+      - /opt/media/remote/realdebrid:/mnt/remote/realdebrid:ro
+    # run the known-good loop from scanner
+    command: ["python", "-c", "from refresher.core.scanner import run_loop; run_loop(300)"]
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import os; import sys; sys.exit(0 if os.path.exists('/data') else 1)"]
+      # dry, non-destructive scan; unhealthy only if mount missing
+      test: ["CMD", "python", "-m", "refresher.core.scanner", "--json"]
       interval: 30s
-      timeout: 5s
+      timeout: 10s
       retries: 5
+      start_period: 30s
     depends_on:
-      - research-relay
+      research-relay:
+        condition: service_healthy
 
   research-relay:
     build:
@@ -29,7 +42,9 @@ services:
       - "5050:5050"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:5050/healthz || exit 1"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:5050/healthz"]
       interval: 30s
       timeout: 5s
       retries: 5
+      start_period: 15s
+
