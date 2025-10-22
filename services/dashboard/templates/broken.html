@@ -1,0 +1,26 @@
+{% extends "index.html" %}
+{% block content %}
+<div class="container mt-4">
+  <h3>Broken symlinks</h3>
+  {% if not items %}
+    <p>No broken items 🎉</p>
+  {% else %}
+    <div class="list-group">
+      {% for it in items %}
+      <div class="list-group-item d-flex justify-content-between align-items-center">
+        <div style="max-width:70%;word-break:break-all;">
+          <div><strong>{{ it.term }}</strong></div>
+          <small>path: {{ it.path }}</small><br>
+          <small>target: {{ it.target }}</small>
+        </div>
+        <form method="post" action="/action/auto" class="d-inline">
+          <input type="hidden" name="term" value="{{ it.term }}">
+          <input type="hidden" name="path" value="{{ it.path }}">
+          <button type="submit" class="btn btn-sm btn-primary">Auto search & repair</button>
+        </form>
+      </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -56,7 +56,7 @@ def enqueue_action(url: str, reason: str="", related_path: str|None=None):
         cur.execute("SELECT id FROM actions WHERE url=? AND status='pending'", (url,))
         if cur.fetchone():
             conn.close(); return
-        cur.execute("INSERT INTO actions(url, reason, related_path, created_utc) VALUES(?,?,?,?)",
+        cur.execute("INSERT OR IGNORE INTO actions(url, reason, related_path, created_utc) VALUES(?,?,?,strftime('%s','now'))",
                     (url, reason, related_path, dt.datetime.utcnow().isoformat()))
         conn.commit(); conn.close()
 
@@ -75,4 +75,17 @@ def mark_sent(action_id: int, ok: bool):
         cur = conn.cursor()
         cur.execute("UPDATE actions SET status=?, fired_utc=? WHERE id=?",
                     ("sent" if ok else "failed", dt.datetime.utcnow().isoformat(), action_id))
+        conn.commit(); conn.close()
+
+def update_symlink_status(path: str, status: str):
+    with _db_lock:
+        conn = _conn(); _migrate(conn)
+        cur = conn.cursor()
+        # Try last_status first, fall back to status for older schema
+        try:
+            cur.execute("UPDATE symlinks SET last_status=? WHERE path=?", (status, path))
+            if cur.rowcount == 0:
+                cur.execute("UPDATE symlinks SET status=? WHERE path=?", (status, path))
+        except Exception:
+            cur.execute("UPDATE symlinks SET status=? WHERE path=?", (status, path))
         conn.commit(); conn.close()

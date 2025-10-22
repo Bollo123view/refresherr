@@ -1,0 +1,159 @@
+from __future__ import annotations
+import os, re, time, json, logging, pathlib
+from typing import Dict, List, Optional
+from . import store
+
+log = logging.getLogger("refresher.scanner")
+
+def _load_routing(cfg: dict) -> List[Dict[str,str]]:
+    routing = (cfg.get("routing") or [])
+    # normalize path prefixes (no trailing slash)
+    norm = []
+    for r in routing:
+        p = r.get("prefix", "").rstrip("/")
+        t = r.get("type")
+        if p and t:
+            norm.append({"prefix": p, "type": t})
+    # sort longest-first
+    norm.sort(key=lambda x: len(x["prefix"]), reverse=True)
+    return norm
+
+def _route_for_path(path: str, routing: List[Dict[str,str]]) -> Optional[str]:
+    for r in routing:
+        if path.startswith(r["prefix"]):
+            return r["type"]
+    return None
+
+def _relay_base_and_token() -> tuple[str,str]:
+    base = os.environ.get("RELAY_BASE", "")
+    token = os.environ.get("RELAY_TOKEN", "")
+    return base, token
+
+def enqueue_auto_action(path: str, title: str, route_type: str):
+    base, token = _relay_base_and_token()
+    if not base or not token:
+        log.warning("Relay not configured; skipping auto action for %s", path)
+        return
+    # Build URL: RELAY_BASE already ends with /find
+    params = {
+        "token": token,
+        "type": route_type,
+        "scope": "auto",
+        "term": title
+    }
+    # We keep it simple; the relay decides series/season/episodes/movie
+    url = base + "?" + "&".join(f"{k}={store.url_encode(str(v))}" for k,v in params.items())
+    store.enqueue_action(url=url, reason="auto-search", related_path=path)
+
+def scan_once(cfg: dict):
+    """Walk symlink roots and mark ok/broken.
+       When broken is detected, enqueue a smart 'auto' find action routed by cfg.routing.
+    """
+    roots: List[str] = cfg.get("scan", {}).get("roots", [])
+    routing = _load_routing(cfg)
+    dryrun = str(os.environ.get("DRYRUN","true")).lower() == "true"
+
+    for root in roots:
+        root = root.rstrip("/")
+        if not root or not os.path.exists(root):
+            continue
+        for p in pathlib.Path(root).rglob("*"):
+            if p.is_symlink():
+                try:
+                    target = os.readlink(p)
+                    ok = os.path.exists(p.resolve())
+                except Exception:
+                    ok = False
+                    target = None
+                status = "ok" if ok else "broken"
+                store.record_symlink(str(p), target, status)
+
+                if status == "broken":
+                    # derive display title from folder name (series or movie dir)
+                    title = p.parent.name
+                    rtype = _route_for_path(str(p), routing) or ""
+                    if rtype:
+                        enqueue_auto_action(str(p), title, rtype)
+                    else:
+                        log.info("No routing hit for %s; not enqueuing", p)
+
+    if dryrun:
+        log.info("DRYRUN=true: recorded statuses and queued actions but made no external changes.")
+
+# ---------------- Loop & CLI helpers ----------------
+
+def _load_cfg_from_file() -> dict:
+    """Load YAML config from /config/config.yaml by default, with safe fallback."""
+    import yaml
+    cfg_path = os.environ.get("CONFIG_FILE", "/config/config.yaml")
+    if os.path.exists(cfg_path):
+        try:
+            with open(cfg_path, "r") as f:
+                data = yaml.safe_load(f) or {}
+            return data
+        except Exception as e:
+            log.warning("Failed to read %s: %s", cfg_path, e)
+    else:
+        log.warning("Config not found at %s; proceeding with env defaults", cfg_path)
+    # Fallback: single root from env (read-only behaviour)
+    return {"scan": {"roots": [os.environ.get("SYMLINK_ROOT", "/opt/media/jelly")]}, "routing": []}
+
+
+import requests
+
+def _safe_unlink(p: str) -> bool:
+    try:
+        if os.path.islink(p):
+            os.unlink(p)
+            return True
+    except Exception:
+        pass
+    return False
+
+def process_pending_actions(limit: int = 5):
+    """Fire pending actions via research-relay and mark sent/failed.
+    Also, if related_path is a symlink, unlink it *before* firing to ARR.
+    """
+    rows = store.get_pending(limit)
+    for r in rows:
+        url = r.get("url") if isinstance(r, dict) else r["url"]
+        # optional related path for safe unlink + status flip
+        related = r.get("related_path") if isinstance(r, dict) else r["related_path"]
+        if related:
+            try:
+                # mark repairing in DB best-effort
+                store.update_symlink_status(related, "repairing")
+                _safe_unlink(related)
+            except Exception:
+                pass
+        ok = False
+        try:
+            resp = requests.get(url, timeout=20)
+            ok = (200 <= resp.status_code < 300)
+        except Exception:
+            ok = False
+        store.mark_sent(r["id"], ok)
+
+def run_loop(interval_sec: int = 300):
+    """Loop scan_once(cfg) forever every interval_sec seconds (non-destructive)."""
+    cfg = _load_cfg_from_file()
+    while True:
+        scan_once(cfg)
+                try:
+            process_pending_actions(5)
+        except Exception:
+            pass
+        time.sleep(interval_sec)
+
+if __name__ == "__main__":
+    # Support: python -m refresher.core.scanner --json
+    import sys
+    if "--json" in sys.argv:
+        cfg = _load_cfg_from_file()
+        roots = (cfg.get("scan") or {}).get("roots") or []
+        print(json.dumps({"ok": True, "roots": roots}), flush=True)
+        sys.exit(0)
+    # default: single scan and exit
+    cfg = _load_cfg_from_file()
+    scan_once(cfg)
+

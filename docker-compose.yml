@@ -1,6 +1,4 @@
 # docker-compose.yml
-version: "3.9"
-
 services:
   refresher:
     build:
@@ -13,12 +11,11 @@ services:
       - MOUNT_ROOT=/mnt/remote/realdebrid
       - REFRESHER_LOG_LEVEL=INFO
     volumes:
-      - ./config:/app/config 
+      - ./config:/config:ro
       - ./data:/data
       - /opt/media:/opt/media:rw
       # Left side must be the HOST path where the real files live:
       - /opt/media/remote/realdebrid:/mnt/remote/realdebrid:ro
-    # run the known-good loop from scanner
     command: ["python", "-c", "from refresher.core.scanner import run_loop; run_loop(300)"]
     restart: unless-stopped
     healthcheck:
@@ -38,11 +35,43 @@ services:
     container_name: research-relay
     env_file:
       - ./.env
+    working_dir: /app
+    # Run the Flask app even if app.py doesn't include app.run()
+    command: ["python", "-c", "from app import app; app.run(host='0.0.0.0', port=5050)"]
     ports:
       - "5050:5050"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:5050/healthz"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:5050/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  dashboard:
+    image: python:3.11-slim
+    container_name: refresher-dashboard
+    env_file:
+      - ./.env
+    environment:
+      - DATA_DIR=/data
+      - RELAY_BASE=${RELAY_BASE}
+      - RELAY_TOKEN=${RELAY_TOKEN}
+      - FLASK_SECRET=${FLASK_SECRET:-change-me}
+      - PORT=8088
+    working_dir: /app
+    volumes:
+      # app code (read-only) + DB (read-only)
+      - ./services/dashboard:/app:ro
+      - ./data:/data:rw
+      - /opt/refresherr/override/templates:/app/templates
+    ports:
+      - "8088:8088"
+    # install deps then run; keeps things simple without a custom Dockerfile
+    command: ["sh", "-lc", "pip install --no-cache-dir -r requirements.txt && python app.py"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8088/health"]
       interval: 30s
       timeout: 5s
       retries: 5

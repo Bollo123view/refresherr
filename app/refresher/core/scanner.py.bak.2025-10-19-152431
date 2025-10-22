@@ -2,6 +2,7 @@ import os, time, json, sqlite3, pathlib, requests
 
 DB_PATH = "/data/symlinks.db"
 SYMLINK_ROOT = os.environ.get("SYMLINK_ROOT", "/opt/media/jelly")
+MOUNT_ROOT   = os.environ.get("MOUNT_ROOT", "/mnt/remote/realdebrid")
 LOG_LEVEL    = os.environ.get("REFRESHER_LOG_LEVEL", "INFO").upper()
 
 def log(level, msg):
@@ -14,8 +15,23 @@ def db():
     conn.row_factory = sqlite3.Row
     return conn
 
-def ensure_actions(conn):
+def ensure_tables(conn):
     c = conn.cursor()
+    c.execute("""CREATE TABLE IF NOT EXISTS symlinks(
+        path TEXT PRIMARY KEY,
+        ext TEXT,
+        last_target TEXT,
+        last_status TEXT,
+        last_size_bytes INTEGER,
+        last_mtime_ns   INTEGER,
+        first_seen_ts   INTEGER,
+        last_seen_ts    INTEGER,
+        times_seen      INTEGER DEFAULT 0,
+        is_current      INTEGER DEFAULT 1
+    )""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_symlinks_status  ON symlinks(last_status)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_symlinks_ext     ON symlinks(ext)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_symlinks_current ON symlinks(is_current)")
     c.execute("""CREATE TABLE IF NOT EXISTS actions(
       id             INTEGER PRIMARY KEY AUTOINCREMENT,
       created_utc    INTEGER  DEFAULT (strftime('%s','now')),
@@ -35,10 +51,6 @@ def ensure_actions(conn):
     c.execute("CREATE INDEX IF NOT EXISTS idx_actions_created ON actions(created_utc)")
     conn.commit()
 
-def table_cols(conn, name: str):
-    rows = conn.execute(f"PRAGMA table_info('{name}')").fetchall()
-    return {r["name"] for r in rows}
-
 def is_broken_symlink(p: pathlib.Path):
     if not p.is_symlink():
         return (False, None)
@@ -52,77 +64,29 @@ def is_broken_symlink(p: pathlib.Path):
         return (True, None)
 
 def record_symlink(conn, path: str, target: str, status: str, st=None):
-    cols = table_cols(conn, "symlinks")
-    if not cols:
-        # If the table doesn't exist at all, create a minimal one compatible with your current schema.
-        conn.execute("""CREATE TABLE IF NOT EXISTS symlinks(
-            path TEXT PRIMARY KEY,
-            last_target TEXT,
-            last_status TEXT
-        )""")
-        cols = table_cols(conn, "symlinks")
-
-    # Build insert/update payload based on available columns
-    data = {"path": path}
-    if "last_target" in cols:      data["last_target"] = target
-    if "last_status" in cols:      data["last_status"] = status
-    if "status" in cols and "last_status" not in cols:  # legacy schema
-        data["status"] = status
-
-    # Optional columns
-    if "ext" in cols:              data["ext"] = pathlib.Path(path).suffix.lower()
-    if "last_size_bytes" in cols and st is not None: data["last_size_bytes"] = getattr(st, "st_size", None)
-    if "last_mtime_ns"   in cols and st is not None: data["last_mtime_ns"]   = getattr(st, "st_mtime_ns", None)
+    c = conn.cursor()
+    ext = pathlib.Path(path).suffix.lower()
+    size = getattr(st, "st_size", None)
+    mtime = getattr(st, "st_mtime_ns", None)
     now = int(time.time())
-    if "first_seen_ts" in cols:    data.setdefault("first_seen_ts", now)
-    if "last_seen_ts"  in cols:    data["last_seen_ts"] = now
-    if "is_current"    in cols:    data["is_current"] = 1
-
-    # INSERT ... ON CONFLICT(path) DO UPDATE SET ...
-    keys = list(data.keys())
-    placeholders = ",".join("?" for _ in keys)
-    assignments = []
-    for k in keys:
-        if k == "path": 
-            continue
-        # times_seen special handling
-        if k == "times_seen":
-            continue
-        assignments.append(f"{k}=excluded.{k}")
-    if "times_seen" in cols:
-        assignments.append("times_seen=COALESCE(times_seen,0)+1")
-
-    sql = f"INSERT INTO symlinks({','.join(keys)}) VALUES({placeholders}) " \
-          f"ON CONFLICT(path) DO UPDATE SET {', '.join(assignments)}"
-    conn.execute(sql, tuple(data[k] for k in keys))
-    conn.commit()
-
-def unlink_if_symlink(path: str):
-    try:
-        if os.path.islink(path):
-            os.unlink(path)
-            return True
-    except Exception as e:
-        log("WARNING", f"unlink failed {path}: {e}")
-    return False
-
-def update_symlink_status(conn, path: str, status: str):
-    cols = table_cols(conn, "symlinks")
-    now = int(time.time())
-    if "last_status" in cols and "last_seen_ts" in cols:
-        conn.execute("UPDATE symlinks SET last_status=?, last_seen_ts=?, is_current=1 WHERE path=?",
-                     (status, now, path))
-    elif "status" in cols:
-        conn.execute("UPDATE symlinks SET status=? WHERE path=?", (status, path))
-    else:
-        # fallback: make sure row exists
-        conn.execute("INSERT INTO symlinks(path,last_status) VALUES(?,?) ON CONFLICT(path) DO UPDATE SET last_status=excluded.last_status",
-                     (path, status))
+    c.execute("""
+        INSERT INTO symlinks(path,ext,last_target,last_status,last_size_bytes,last_mtime_ns,first_seen_ts,last_seen_ts,times_seen,is_current)
+        VALUES(?,?,?,?,?,?,?,?,?,1)
+        ON CONFLICT(path) DO UPDATE SET
+          ext=excluded.ext,
+          last_target=excluded.last_target,
+          last_status=excluded.last_status,
+          last_size_bytes=excluded.last_size_bytes,
+          last_mtime_ns=excluded.last_mtime_ns,
+          last_seen_ts=?,
+          times_seen=symlinks.times_seen+1,
+          is_current=1
+    """,(path,ext,target,status,size,mtime,now,now,1, now))
     conn.commit()
 
 def scan_once():
     conn = db()
-    ensure_actions(conn)
+    ensure_tables(conn)
     root = pathlib.Path(SYMLINK_ROOT)
     if not root.exists():
         log("WARNING", f"SYMLINK_ROOT missing: {SYMLINK_ROOT}")
@@ -142,6 +106,26 @@ def scan_once():
         else: n_ok += 1
     log("INFO", f"Scan summary: {n_ok+n_broken} symlinks; {n_ok} ok; {n_broken} broken")
 
+def unlink_if_symlink(path: str):
+    try:
+        if os.path.islink(path):
+            os.unlink(path)
+            return True
+    except Exception as e:
+        log("WARNING", f"unlink failed {path}: {e}")
+    return False
+
+def update_symlink_status(conn, path: str, status: str):
+    c = conn.cursor()
+    now = int(time.time())
+    try:
+        c.execute("UPDATE symlinks SET last_status=?, last_seen_ts=?, is_current=1 WHERE path=?",
+                  (status, now, path))
+    except sqlite3.OperationalError:
+        c.execute("UPDATE symlinks SET status=?, last_seen_utc=datetime('now') WHERE path=?",
+                  (status, path))
+    conn.commit()
+
 def get_pending(conn, limit=5):
     return conn.execute(
         "SELECT * FROM actions WHERE status='pending' ORDER BY created_utc LIMIT ?",
@@ -155,7 +139,7 @@ def mark_sent(conn, action_id: int, ok: bool, err: str=None):
 
 def process_actions():
     conn = db()
-    ensure_actions(conn)
+    ensure_tables(conn)
     rows = get_pending(conn, limit=5)
     if not rows:
         return
