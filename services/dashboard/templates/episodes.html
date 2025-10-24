@@ -1,45 +1,41 @@
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Episodes</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
-</head>
-<body>
-<main class="container">
-  <h2>Episodes (symlinked)</h2>
-  <form method="get">
-    <input type="text" name="q" value="{{ q }}" placeholder="Search series or file name…" />
-    <button type="submit">Search</button>
-  </form>
-  <p>Results: {{ total }}</p>
-  <table>
-    <thead><tr><th>Series</th><th>Episode File</th><th>Season</th><th>Quality</th><th>Size</th><th>Action</th></tr></thead>
+{% extends "base.html" %}
+{% block title %}Episodes (symlinked){% endblock %}
+{% block content %}
+<h1 class="h3 mb-3">Episodes (symlinked)</h1>
+<form class="input-group mb-3" method="get">
+  <input class="form-control searchbar" type="text" name="q" value="{{ q }}" placeholder="Search series or file name…">
+  <button class="btn btn-primary" type="submit">Search</button>
+</form>
+<p class="text-muted">Results: {{ total }}</p>
+
+<div class="table-responsive">
+  <table class="table table-hover align-middle">
+    <thead><tr><th style="min-width:260px">Series</th><th style="min-width:380px">Episode File</th><th>Season</th><th>Quality</th><th>Size</th><th class="text-end">Action</th></tr></thead>
     <tbody>
-    {% for it in items %}
+      {% for it in items %}
       <tr>
-        <td>{{ it.series_title }}</td>
-        <td><small>{{ it.episode_name }}</small></td>
-        <td>{{ it.season }}</td>
-        <td>{{ it.quality }} {{ it.resolution or '' }}</td>
+        <td class="fw-semibold">{{ it.series_title }}</td>
+        <td><small class="text-muted">{{ it.episode_name }}</small></td>
+        <td><span class="badge text-bg-dark">{{ it.season }}</span></td>
+        <td><span class="badge text-bg-secondary">{{ it.quality }}</span>
+            {% if it.resolution %}<span class="badge text-bg-dark">{{ it.resolution }}</span>{% endif %}</td>
         <td>{{ sizeof_fmt(it.size or 0) }}</td>
-        <td>
+        <td class="text-end">
           <form method="post" action="{{ url_for('action_auto') }}">
             <input type="hidden" name="term" value="{{ it.series_title }}"/>
             <input type="hidden" name="type" value="sonarr_tv"/>
-            <button type="submit">Auto search</button>
+            <button class="btn btn-sm btn-primary" type="submit">Auto search</button>
           </form>
         </td>
       </tr>
-    {% endfor %}
+      {% endfor %}
     </tbody>
   </table>
-  <nav>
-    {% if page > 1 %}<a href="?q={{ q }}&page={{ page-1 }}">Prev</a>{% endif %}
-    <span>Page {{ page }} of {{ pages }}</span>
-    {% if page < pages %}<a href="?q={{ q }}&page={{ page+1 }}">Next</a>{% endif %}
-  </nav>
-  <p><a href="{{ url_for('index') }}">Back</a></p>
-</main>
-</body>
-</html>
+</div>
+
+<nav class="d-flex align-items-center gap-3 mt-3">
+  {% if page > 1 %}<a class="btn btn-outline-light btn-sm" href="?q={{ q }}&page={{ page-1 }}">Prev</a>{% endif %}
+  <span class="text-muted">Page {{ page }} of {{ pages }}</span>
+  {% if page < pages %}<a class="btn btn-outline-light btn-sm" href="?q={{ q }}&page={{ page+1 }}">Next</a>{% endif %}
+</nav>
+{% endblock %}

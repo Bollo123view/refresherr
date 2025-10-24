@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Refresherr{% endblock %}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    :root{
+      --bg:#0f1115;
+      --panel:#171a21;
+      --muted:#9aa4b2;
+      --text:#e8eaed;
+      --accent:#0d6efd;
+      --danger:#dc3545;
+    }
+    html,body{height:100%;}
+    body{background:var(--bg); color:var(--text);}
+    .navbar{background:rgba(15,17,21,0.9); backdrop-filter: blur(6px);}
+    .card{background:var(--panel); border:1px solid rgba(255,255,255,0.06); border-radius:1rem;}
+    .card-header{border-bottom-color: rgba(255,255,255,0.06);}
+    .table{color:var(--text);}
+    .table thead th{color:#cbd5e1; border-bottom:1px solid rgba(255,255,255,0.08);}
+    .table > :not(caption) > * > *{background:transparent; border-bottom:1px solid rgba(255,255,255,0.06);}
+    .text-muted{color:var(--muted)!important;}
+    .btn-primary{background:var(--accent); border-color:var(--accent);}
+    .btn-outline-light{border-color:rgba(255,255,255,0.2); color:#e8eaed;}
+    .searchbar{background:#0c0e13; border:1px solid rgba(255,255,255,0.08); color:#e8eaed;}
+    .searchbar::placeholder{color:#94a3b8;}
+    .badge{font-weight:500;}
+    .container-narrow{max-width: 1200px;}
+    .shadow-soft{box-shadow: 0 10px 30px rgba(0,0,0,.25);}
+    .sticky-actions{position:sticky; right:0;}
+    a{color:#9ec5fe;}
+    a:hover{color:#cfe2ff;}
+  </style>
+</head>
+<body>
+<nav class="navbar navbar-expand-lg navbar-dark border-bottom border-secondary-subtle">
+  <div class="container-fluid container-narrow">
+    <a class="navbar-brand fw-semibold" href="{{ url_for('index') }}">Refresherr</a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav" aria-controls="nav" aria-expanded="false" aria-label="Toggle navigation">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="nav">
+      <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+        <li class="nav-item"><a class="nav-link" href="{{ url_for('broken') }}">Broken</a></li>
+        <li class="nav-item"><a class="nav-link" href="{{ url_for('movies') }}">Movies</a></li>
+        <li class="nav-item"><a class="nav-link" href="{{ url_for('episodes') }}">Episodes</a></li>
+      </ul>
+      {% if not relay_ok is defined or not relay_ok %}
+      <span class="badge text-bg-secondary">Relay offline</span>
+      {% else %}
+      <span class="badge text-bg-success">Relay online</span>
+      {% endif %}
+    </div>
+  </div>
+</nav>
+
+<main class="container-fluid container-narrow py-4">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="mb-3">
+      {% for category, message in messages %}
+        <div class="alert alert-{{ 'danger' if category=='error' else category }} shadow-soft" role="alert">{{ message }}</div>
+      {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  {% block content %}{% endblock %}
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
