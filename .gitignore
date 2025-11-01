@@ -10,3 +10,7 @@
 # Runtime / local data
 data/
 *.log
+refresherr-*.zip
+*.zip.sha256
+refresherr-*.zip
+*.zip.sha256
