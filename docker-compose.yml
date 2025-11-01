@@ -64,7 +64,7 @@ services:
       # app code (read-only) + DB (read-only)
       - ./services/dashboard:/app:ro
       - ./data:/data:rw
-      - /opt/refresherr/override/templates:/app/templates
+      - /opt/refresherr/services/dashboard/templates:/app/templates
     ports:
       - "8088:8088"
     # install deps then run; keeps things simple without a custom Dockerfile

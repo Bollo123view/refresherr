@@ -7,35 +7,29 @@
   <button class="btn btn-primary" type="submit">Search</button>
 </form>
 <p class="text-muted">Results: {{ total }}</p>
-
 <div class="table-responsive">
   <table class="table table-hover align-middle">
-    <thead><tr><th style="min-width:260px">Series</th><th style="min-width:380px">Episode File</th><th>Season</th><th>Quality</th><th>Size</th><th class="text-end">Action</th></tr></thead>
+    
+<thead><tr><th style="min-width:240px">Series</th><th style="min-width:420px">Episode File</th><th>Season</th><th>Quality</th><th>Size</th><th class="text-end w-actions">Action</th></tr></thead>
+
     <tbody>
       {% for it in items %}
-      <tr>
-        <td class="fw-semibold">{{ it.series_title }}</td>
-        <td><small class="text-muted">{{ it.episode_name }}</small></td>
-        <td><span class="badge text-bg-dark">{{ it.season }}</span></td>
-        <td><span class="badge text-bg-secondary">{{ it.quality }}</span>
-            {% if it.resolution %}<span class="badge text-bg-dark">{{ it.resolution }}</span>{% endif %}</td>
-        <td>{{ sizeof_fmt(it.size or 0) }}</td>
-        <td class="text-end">
-          <form method="post" action="{{ url_for('action_auto') }}">
-            <input type="hidden" name="term" value="{{ it.series_title }}"/>
-            <input type="hidden" name="type" value="sonarr_tv"/>
-            <button class="btn btn-sm btn-primary" type="submit">Auto search</button>
-          </form>
-        </td>
-      </tr>
-      {% endfor %}
+<tr>
+  <td class="fw-semibold text-dim">{{ it.series_title }}</td>
+  <td title="{{ it.episode_name }}"><small class="text-muted truncate mono">{{ it.episode_name }}</small></td>
+  <td><span class="badge text-bg-dark">{{ it.season }}</span></td>
+  <td><span class="badge text-bg-secondary">{{ it.quality }}</span>{% if it.resolution %}<span class="badge text-bg-dark">{{ it.resolution }}</span>{% endif %}</td>
+  <td>{{ sizeof_fmt(it.size or 0) }}</td>
+  <td class="text-end">
+    <form method="post" action="{{ url_for('action_auto') }}">
+      <input type="hidden" name="term" value="{{ it.series_title }}"/>
+      <input type="hidden" name="type" value="sonarr_tv"/>
+      <button class="btn btn-sm btn-primary" type="submit">Auto search</button>
+    </form>
+  </td>
+</tr>
+{% endfor %}
     </tbody>
   </table>
 </div>
-
-<nav class="d-flex align-items-center gap-3 mt-3">
-  {% if page > 1 %}<a class="btn btn-outline-light btn-sm" href="?q={{ q }}&page={{ page-1 }}">Prev</a>{% endif %}
-  <span class="text-muted">Page {{ page }} of {{ pages }}</span>
-  {% if page < pages %}<a class="btn btn-outline-light btn-sm" href="?q={{ q }}&page={{ page+1 }}">Next</a>{% endif %}
-</nav>
 {% endblock %}

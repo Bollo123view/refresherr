@@ -2,29 +2,95 @@
 {% block title %}Broken symlinks{% endblock %}
 {% block content %}
 <h1 class="h3 mb-3">Broken symlinks</h1>
-{% if not items %}
-  <div class="alert alert-success">No broken items 🎉</div>
-{% else %}
-  <div class="table-responsive">
-    <table class="table table-hover align-middle">
-      <thead><tr><th>Title / Term</th><th style="min-width:420px">Path</th><th style="min-width:420px">Last target</th><th class="text-end">Actions</th></tr></thead>
-      <tbody>
-        {% for it in items %}
-        <tr>
-          <td class="fw-semibold">{{ it.term }}</td>
-          <td><small class="text-muted">{{ it.path }}</small></td>
-          <td><small class="text-muted">{{ it.target or '-' }}</small></td>
-          <td class="text-end sticky-actions">
+
+<form class="input-group mb-3" method="get" action="">
+  <input class="form-control searchbar" type="text" name="q" value="{{ q|default('') }}" placeholder="Filter by series, season, or term…">
+  <button class="btn btn-primary" type="submit">Search</button>
+</form>
+
+{# ---- Build flat, metadata-first rows ---- #}
+{% set rows = [] %}
+{% for it in items %}
+  {# Prefer explicit metadata if present #}
+  {% set meta_series = it.series or it.show or it.series_name or it.title_series %}
+  {% set meta_season = it.season or it.season_num or it.seasonNumber or it.season_name %}
+
+  {# Fallbacks: derive from term and/or path #}
+  {% set term = it.term or it.title or (it.path.split('/')|last if it.path) or '' %}
+  {% set series = meta_series if meta_series else (term.split(' - S')[0] if ' - S' in term else (term.split(' - ')[0] if ' - ' in term else term)) %}
+
+  {# Season from metadata, else from path "Season X", else from Sxx in term #}
+  {% if meta_season %}
+    {% set season = (meta_season|string).startswith('Season ') and meta_season or ('Season ' ~ meta_season) %}
+  {% else %}
+    {% set parts = (it.path or '').split('/') %}
+    {% set ns = namespace(clean=[]) %}
+    {% for p in parts %}
+      {% if p and p|length > 0 %}{% set ns.clean = ns.clean + [p] %}{% endif %}
+    {% endfor %}
+    {% set clean = ns.clean %}
+    {% set sidx = -1 %}
+    {% for p in clean|reverse %}
+      {% if (p|lower|trim)[:7] == 'season ' %}{% set sidx = clean|length - loop.index %}{% endif %}
+    {% endfor %}
+    {% if sidx >= 0 %}
+      {% set season = clean[sidx] %}
+    {% elif ' - S' in term %}
+      {% set seg = term.split(' - S')[1] %}
+      {% set season = 'Season ' ~ (seg[:2]|int) %}
+    {% else %}
+      {% set season = 'Unknown' %}
+    {% endif %}
+  {% endif %}
+
+  {# Optional filter #}
+  {% set hay = (series|string ~ ' ' ~ season|string ~ ' ' ~ term|string)|lower %}
+  {% if not q or (q|lower in hay) %}
+    {% set _ = rows.append({'series':series, 'season':season, 'term':term, 'it':it}) %}
+  {% endif %}
+{% endfor %}
+
+<p class="text-muted">Results: {{ rows|length }}</p>
+
+<div class="table-responsive">
+  <table class="table table-hover table-sm align-middle">
+    <thead>
+      <tr>
+        <th class="text-start" style="width:170px;">Action</th>
+        <th style="min-width:260px">Series</th>
+        <th style="min-width:120px">Season</th>
+        <th style="min-width:420px">Title / Term</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      {% set it = row.it %}
+      <tr>
+        <td class="text-start">
+          <div class="d-flex gap-2">
+            <form method="post" action="{{ url_for('action_auto') }}" class="d-inline">
+              <input type="hidden" name="term" value="{{ row.series }}">
+              <input type="hidden" name="mode" value="series">
+              <button type="submit" class="btn btn-sm btn-outline-light">Repair series</button>
+            </form>
             <form method="post" action="{{ url_for('action_auto') }}" class="d-inline">
               <input type="hidden" name="term" value="{{ it.term }}">
               <input type="hidden" name="path" value="{{ it.path }}">
-              <button type="submit" class="btn btn-sm btn-primary">Auto search &amp; repair</button>
+              <button type="submit" class="btn btn-sm btn-primary">Repair</button>
             </form>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+          </div>
+        </td>
+        <td class="fw-semibold text-dim">{{ row.series }}</td>
+        <td><span class="badge text-bg-dark">{{ row.season }}</span></td>
+        <td title="{{ row.term }}"><small class="text-muted truncate mono">{{ row.term }}</small></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if rows|length == 0 %}
+  <div class="alert alert-success">No broken symlinks 🎉</div>
 {% endif %}
+
 {% endblock %}

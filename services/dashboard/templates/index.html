@@ -1,41 +1,22 @@
 {% extends "base.html" %}
 {% block title %}Refresherr Dashboard{% endblock %}
 {% block content %}
-<h1 class="h3 mb-4">Refresherr Dashboard</h1>
-
+<h1 class="h2 mb-4">Refresherr Dashboard</h1>
 <div class="row g-4">
-  <div class="col-12 col-md-4">
-    <div class="card shadow-soft h-100">
-      <div class="card-body">
-        <h5 class="card-title mb-2">Movies (symlinked)</h5>
-        <p class="card-text fs-5"><strong>{{ movies_linked }}</strong> / {{ movies_total }} 
-          <span class="badge text-bg-dark ms-1">{{ '%.2f'|format(mov_pct) }}%</span></p>
-        <a href="{{ url_for('movies') }}" class="btn btn-primary">Browse Movies</a>
-      </div>
-    </div>
-  </div>
-  <div class="col-12 col-md-4">
-    <div class="card shadow-soft h-100">
-      <div class="card-body">
-        <h5 class="card-title mb-2">Episodes (symlinked)</h5>
-        <p class="card-text fs-5"><strong>{{ eps_linked }}</strong> / {{ eps_total }} 
-          <span class="badge text-bg-dark ms-1">{{ '%.2f'|format(eps_pct) }}%</span></p>
-        <a href="{{ url_for('episodes') }}" class="btn btn-primary">Browse Episodes</a>
-      </div>
-    </div>
-  </div>
-  <div class="col-12 col-md-4">
-    <div class="card shadow-soft h-100">
-      <div class="card-body">
-        <h5 class="card-title mb-2">Broken symlinks</h5>
-        <p class="card-text fs-5"><strong>{{ broken }}</strong></p>
-        <a href="{{ url_for('broken') }}" class="btn btn-outline-light">View Broken</a>
-      </div>
-    </div>
-  </div>
+  <div class="col-12 col-md-4"><div class="card h-100"><div class="card-body">
+    <h5 class="card-title">Movies (symlinked)</h5>
+    <p class="fs-4 mb-3"><span class="stat-strong">{{ movies_linked }}</span><span class="stat-faint"> / {{ movies_total }}</span><span class="pill ms-2">{{ '%.2f'|format(mov_pct) }}%</span></p>
+    <a href="{{ url_for('movies') }}" class="btn btn-primary">Browse Movies</a>
+  </div></div></div>
+  <div class="col-12 col-md-4"><div class="card h-100"><div class="card-body">
+    <h5 class="card-title">Episodes (symlinked)</h5>
+    <p class="fs-4 mb-3"><span class="stat-strong">{{ eps_linked }}</span><span class="stat-faint"> / {{ eps_total }}</span><span class="pill ms-2">{{ '%.2f'|format(eps_pct) }}%</span></p>
+    <a href="{{ url_for('episodes') }}" class="btn btn-primary">Browse Episodes</a>
+  </div></div></div>
+  <div class="col-12 col-md-4"><div class="card h-100"><div class="card-body">
+    <h5 class="card-title">Broken symlinks</h5>
+    <p class="fs-4 mb-3"><span class="stat-strong">{{ broken }}</span></p>
+    <a href="{{ url_for('broken') }}" class="btn btn-outline-light">View Broken</a>
+  </div></div></div>
 </div>
-
-{% if not relay_ok %}
-  <p class="mt-3 text-muted">Note: Relay not configured for actions (set <code>RELAY_BASE</code> and <code>RELAY_TOKEN</code> in env).</p>
-{% endif %}
 {% endblock %}

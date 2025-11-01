@@ -7,34 +7,35 @@
   <button class="btn btn-primary" type="submit">Search</button>
 </form>
 <p class="text-muted">Results: {{ total }}</p>
-
 <div class="table-responsive">
-  <table class="table table-hover align-middle">
-    <thead><tr><th style="min-width:280px">Title</th><th>Quality</th><th>Size</th><th style="min-width:420px">Path</th><th class="text-end">Action</th></tr></thead>
+  <table class="table table-hover table-sm align-middle">
+    <thead>
+      <tr>
+        <th class="text-start" style="width:140px;">Action</th>
+        <th style="min-width:300px">Title</th>
+        <th>Quality</th>
+        <th>Size</th>
+      </tr>
+    </thead>
     <tbody>
       {% for it in items %}
       <tr>
-        <td class="fw-semibold">{{ it.title }}</td>
-        <td><span class="badge text-bg-secondary">{{ it.quality }}</span>
-            {% if it.resolution %}<span class="badge text-bg-dark">{{ it.resolution }}</span>{% endif %}</td>
-        <td>{{ sizeof_fmt(it.size or 0) }}</td>
-        <td><small class="text-muted">{{ it.symlink_path }}</small></td>
-        <td class="text-end">
+        <td class="text-start">
           <form method="post" action="{{ url_for('action_auto') }}">
             <input type="hidden" name="term" value="{{ it.title }}"/>
             <input type="hidden" name="type" value="radarr_movie"/>
             <button class="btn btn-sm btn-primary" type="submit">Auto search</button>
           </form>
         </td>
+        <td class="fw-semibold text-dim">{{ it.title }}</td>
+        <td>
+          <span class="badge text-bg-secondary">{{ it.quality }}</span>
+          {% if it.resolution %}<span class="badge text-bg-dark">{{ it.resolution }}</span>{% endif %}
+        </td>
+        <td><span class="text-white">{{ sizeof_fmt(it.size or 0) }}</span></td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
-
-<nav class="d-flex align-items-center gap-3 mt-3">
-  {% if page > 1 %}<a class="btn btn-outline-light btn-sm" href="?q={{ q }}&page={{ page-1 }}">Prev</a>{% endif %}
-  <span class="text-muted">Page {{ page }} of {{ pages }}</span>
-  {% if page < pages %}<a class="btn btn-outline-light btn-sm" href="?q={{ q }}&page={{ page+1 }}">Next</a>{% endif %}
-</nav>
 {% endblock %}
