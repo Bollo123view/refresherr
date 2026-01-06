@@ -226,3 +226,214 @@ export function useManifest() {
 
   return { manifest, loading, error, fetchManifest };
 }
+
+/**
+ * Custom React hook for orchestrator state management.
+ * Provides orchestrator status (enabled/disabled) and toggle function.
+ */
+export function useOrchestrator() {
+  const [state, setState] = useState(null);
+  const [currentRun, setCurrentRun] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // Fetch orchestrator status
+  const fetchStatus = () => {
+    setLoading(true);
+    fetch('/api/orchestrator/status')
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        return response.json();
+      })
+      .then(data => {
+        setState(data.state);
+        setCurrentRun(data.current_run);
+        setLoading(false);
+      })
+      .catch(err => {
+        setError(err.message);
+        setLoading(false);
+      });
+  };
+
+  // Toggle orchestrator enabled/disabled
+  const toggleOrchestrator = async () => {
+    if (!state) return { success: false, error: 'State not loaded' };
+    
+    const newEnabled = !state.enabled;
+    
+    try {
+      const response = await fetch('/api/orchestrator/toggle', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ enabled: newEnabled }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      if (data.success) {
+        setState(data.state);
+        return { success: true, message: data.message };
+      } else {
+        throw new Error(data.error || 'Failed to toggle orchestrator');
+      }
+    } catch (err) {
+      setError(err.message);
+      return { success: false, error: err.message };
+    }
+  };
+
+  useEffect(() => {
+    fetchStatus();
+    // Poll status every 10 seconds
+    const interval = setInterval(fetchStatus, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return { state, currentRun, loading, error, toggleOrchestrator, refresh: fetchStatus };
+}
+
+/**
+ * Custom React hook for repair operations.
+ * Provides functions to trigger repairs and fetch repair history.
+ */
+export function useRepair() {
+  const [history, setHistory] = useState([]);
+  const [currentRun, setCurrentRun] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  // Fetch repair history
+  const fetchHistory = (limit = 50, offset = 0) => {
+    setLoading(true);
+    fetch(`/api/repair/history?limit=${limit}&offset=${offset}`)
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        return response.json();
+      })
+      .then(data => {
+        setHistory(data.history);
+        setLoading(false);
+      })
+      .catch(err => {
+        setError(err.message);
+        setLoading(false);
+      });
+  };
+
+  // Fetch current repair status
+  const fetchStatus = () => {
+    fetch('/api/repair/status')
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        return response.json();
+      })
+      .then(data => {
+        setCurrentRun(data.running ? data.run : null);
+      })
+      .catch(err => {
+        setError(err.message);
+      });
+  };
+
+  // Trigger cinesync repair
+  const runCinesyncRepair = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch('/api/repair/cinesync', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      setLoading(false);
+      
+      if (data.success) {
+        // Refresh history and status after repair
+        fetchHistory();
+        fetchStatus();
+        return { success: true, result: data.result };
+      } else {
+        throw new Error(data.error || 'Repair failed');
+      }
+    } catch (err) {
+      setError(err.message);
+      setLoading(false);
+      return { success: false, error: err.message };
+    }
+  };
+
+  // Trigger ARR repair
+  const runArrRepair = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch('/api/repair/arr', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      setLoading(false);
+      
+      if (data.success) {
+        // Refresh history and status after repair
+        fetchHistory();
+        fetchStatus();
+        return { success: true, result: data.result };
+      } else {
+        throw new Error(data.error || 'Repair failed');
+      }
+    } catch (err) {
+      setError(err.message);
+      setLoading(false);
+      return { success: false, error: err.message };
+    }
+  };
+
+  useEffect(() => {
+    fetchHistory();
+    fetchStatus();
+    // Poll status every 5 seconds while a repair is running
+    const interval = setInterval(() => {
+      fetchStatus();
+      if (currentRun) {
+        fetchHistory();
+      }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [currentRun]);
+
+  return { 
+    history, 
+    currentRun, 
+    loading, 
+    error, 
+    runCinesyncRepair, 
+    runArrRepair,
+    refresh: fetchHistory,
+    refreshStatus: fetchStatus
+  };
+}

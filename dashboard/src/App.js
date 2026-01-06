@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useConfig, useRoutes, useStats, useBrokenItems, useDryRun } from './hooks';
+import { useConfig, useRoutes, useStats, useBrokenItems, useDryRun, useOrchestrator, useRepair } from './hooks';
 import './App.css';
 
 /**
@@ -229,6 +229,216 @@ function StatsSection() {
 }
 
 /**
+ * Orchestrator Toggle component
+ * Controls the auto-repair orchestrator (OFF by default)
+ */
+function OrchestratorToggle() {
+  const { state, loading, toggleOrchestrator } = useOrchestrator();
+  const [message, setMessage] = useState('');
+
+  const handleToggle = async () => {
+    const result = await toggleOrchestrator();
+    if (result.success) {
+      setMessage(result.message);
+      setTimeout(() => setMessage(''), 5000);
+    } else {
+      setMessage(`Error: ${result.error}`);
+    }
+  };
+
+  if (loading || !state) {
+    return <div className="orchestrator-toggle loading">Loading...</div>;
+  }
+
+  return (
+    <div className="orchestrator-section">
+      <h2>Auto-Repair Orchestrator</h2>
+      <div className="orchestrator-toggle-container">
+        <div className="orchestrator-toggle">
+          <span className="toggle-label">Auto-Repair:</span>
+          <button 
+            className={`toggle-btn ${state.enabled ? 'active' : 'inactive'}`}
+            onClick={handleToggle}
+            title={state.enabled ? 'Click to disable auto-repair' : 'Click to enable auto-repair (will attempt cinesync → arr sequence)'}
+          >
+            <span className="toggle-status">
+              {state.enabled ? '🟢 ENABLED' : '⚪ DISABLED (Default)'}
+            </span>
+          </button>
+        </div>
+        {message && (
+          <div className={`toggle-message ${message.includes('Error') ? 'error' : 'success'}`}>
+            {message}
+          </div>
+        )}
+        <div className="orchestrator-info">
+          <p>
+            When enabled, the orchestrator automatically attempts repairs for broken symlinks:
+          </p>
+          <ol>
+            <li>🎬 Cinesync Repair (hotswap from CineSync library)</li>
+            <li>📡 ARR Repair (trigger Sonarr/Radarr searches)</li>
+            <li>🔄 Post-Repair Scan (update status)</li>
+          </ol>
+          {state.last_auto_run_utc && (
+            <p className="last-run">Last auto-run: {new Date(state.last_auto_run_utc).toLocaleString()}</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Manual Repair Controls component
+ * Provides buttons to manually trigger repairs
+ */
+function RepairControls() {
+  const { currentRun, loading, runCinesyncRepair, runArrRepair } = useRepair();
+  const [message, setMessage] = useState('');
+
+  const handleCinesyncRepair = async () => {
+    setMessage('Starting Cinesync repair...');
+    const result = await runCinesyncRepair();
+    if (result.success) {
+      const r = result.result;
+      setMessage(
+        `Cinesync repair completed! ` +
+        `Found: ${r.broken_found}, Repaired: ${r.repaired}, Skipped: ${r.skipped}, Failed: ${r.failed}`
+      );
+    } else {
+      setMessage(`Error: ${result.error}`);
+    }
+  };
+
+  const handleArrRepair = async () => {
+    setMessage('Starting ARR repair...');
+    const result = await runArrRepair();
+    if (result.success) {
+      const r = result.result;
+      setMessage(
+        `ARR repair completed! ` +
+        `Found: ${r.broken_found}, Repaired: ${r.repaired}, Skipped: ${r.skipped}, Failed: ${r.failed}`
+      );
+    } else {
+      setMessage(`Error: ${result.error}`);
+    }
+  };
+
+  const isRunning = currentRun && currentRun.status === 'running';
+
+  return (
+    <div className="repair-controls">
+      <h2>Manual Repair</h2>
+      <div className="repair-buttons">
+        <button 
+          className="repair-btn cinesync"
+          onClick={handleCinesyncRepair}
+          disabled={loading || isRunning}
+          title="Run Cinesync repair to hotswap broken symlinks from CineSync library"
+        >
+          🎬 Run Cinesync Repair Now
+        </button>
+        <button 
+          className="repair-btn arr"
+          onClick={handleArrRepair}
+          disabled={loading || isRunning}
+          title="Run ARR repair to trigger Sonarr/Radarr searches for broken items"
+        >
+          📡 Run ARR Repair Now
+        </button>
+      </div>
+      
+      {isRunning && (
+        <div className="repair-status running">
+          <h3>Repair In Progress</h3>
+          <p>Source: {currentRun.repair_source}</p>
+          <p>Trigger: {currentRun.trigger}</p>
+          <p>Started: {new Date(currentRun.started_utc).toLocaleString()}</p>
+          <div className="repair-stats">
+            <span>Found: {currentRun.broken_found || 0}</span>
+            <span>Repaired: {currentRun.repaired || 0}</span>
+            <span>Skipped: {currentRun.skipped || 0}</span>
+            <span>Failed: {currentRun.failed || 0}</span>
+          </div>
+        </div>
+      )}
+      
+      {message && (
+        <div className={`repair-message ${message.includes('Error') ? 'error' : 'success'}`}>
+          {message}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Repair History component
+ * Shows recent repair runs with stats
+ */
+function RepairHistory() {
+  const { history, loading, error } = useRepair();
+
+  if (loading && history.length === 0) {
+    return <div className="section loading">Loading repair history...</div>;
+  }
+  
+  if (error) {
+    return <div className="section error">Error loading history: {error}</div>;
+  }
+
+  if (!history || history.length === 0) {
+    return (
+      <div className="section">
+        <h2>Repair History</h2>
+        <p>No repair runs yet.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="section repair-history">
+      <h2>Repair History</h2>
+      <div className="history-table-container">
+        <table className="history-table">
+          <thead>
+            <tr>
+              <th>Date/Time</th>
+              <th>Source</th>
+              <th>Trigger</th>
+              <th>Status</th>
+              <th>Found</th>
+              <th>Repaired</th>
+              <th>Skipped</th>
+              <th>Failed</th>
+            </tr>
+          </thead>
+          <tbody>
+            {history.map(run => (
+              <tr key={run.id} className={`status-${run.status}`}>
+                <td>{new Date(run.started_utc).toLocaleString()}</td>
+                <td>{run.repair_source}</td>
+                <td>{run.trigger}</td>
+                <td>
+                  <span className={`status-badge ${run.status}`}>
+                    {run.status}
+                  </span>
+                </td>
+                <td>{run.broken_found || 0}</td>
+                <td className="success-count">{run.repaired || 0}</td>
+                <td>{run.skipped || 0}</td>
+                <td className="error-count">{run.failed || 0}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Main App component
  */
 function App() {
@@ -246,6 +456,9 @@ function App() {
 
       <main className="app-main">
         <StatsSection />
+        <OrchestratorToggle />
+        <RepairControls />
+        <RepairHistory />
         <ConfigSection />
         <RoutingSection />
       </main>
