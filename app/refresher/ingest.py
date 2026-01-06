@@ -2,6 +2,7 @@ from __future__ import annotations
 import os, sys, time, json, sqlite3, datetime as dt
 from typing import Dict, Any, List, Optional
 import requests
+from .core import db
 
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
 DB_PATH = os.path.join(DATA_DIR, "symlinks.db")
@@ -21,69 +22,13 @@ def discover_instances() -> Dict[str, Dict[str, str]]:
     return inst
 
 def db_conn() -> sqlite3.Connection:
-    os.makedirs(DATA_DIR, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")
-    return conn
+    """Get a database connection using the central DB module."""
+    return db.get_connection(DB_PATH)
 
 def ensure_schema(conn: sqlite3.Connection):
-    c = conn.cursor()
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS movies (
-        id INTEGER PRIMARY KEY,
-        instance TEXT,
-        radarr_id INTEGER,
-        title TEXT, year INTEGER,
-        imdb_id TEXT, tmdb_id INTEGER,
-        monitored INTEGER,
-        added_utc TEXT,
-        poster_url TEXT, fanart_url TEXT
-    );""")
-    c.execute("CREATE INDEX IF NOT EXISTS ix_movies_instance ON movies(instance);")
-    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_movies_instance_radarr ON movies(instance, radarr_id);")
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS movie_files (
-        id INTEGER PRIMARY KEY,
-        instance TEXT,
-        radarr_movie_id INTEGER,
-        radarr_file_id INTEGER,
-        quality TEXT, resolution INTEGER,
-        video_codec TEXT, audio_codec TEXT,
-        size_bytes INTEGER,
-        original_path TEXT,
-        symlink_path TEXT
-    );""")
-    c.execute("CREATE INDEX IF NOT EXISTS ix_movie_files_inst_mid ON movie_files(instance, radarr_movie_id);")
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS series (
-        id INTEGER PRIMARY KEY,
-        instance TEXT,
-        sonarr_id INTEGER,
-        title TEXT,
-        imdb_id TEXT, tvdb_id INTEGER, tmdb_id INTEGER,
-        monitored INTEGER,
-        poster_url TEXT, fanart_url TEXT
-    );""")
-    c.execute("CREATE INDEX IF NOT EXISTS ix_series_instance ON series(instance);")
-    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_series_instance_sid ON series(instance, sonarr_id);")
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS episode_files (
-        id INTEGER PRIMARY KEY,
-        instance TEXT,
-        sonarr_series_id INTEGER,
-        sonarr_file_id INTEGER,
-        season_number INTEGER,
-        quality TEXT, resolution INTEGER,
-        release_group TEXT,
-        size_bytes INTEGER,
-        original_path TEXT,
-        symlink_path TEXT
-    );""")
-    c.execute("CREATE INDEX IF NOT EXISTS ix_episode_files_inst_sid ON episode_files(instance, sonarr_series_id);")
-    conn.commit()
+    """Ensure schema is initialized using the central DB module."""
+    # The central db module handles schema initialization
+    db.initialize_schema(conn)
 
 def U(base: str, path: str) -> str:
     return f"{base}/api/v3/{path.lstrip('/') }"
@@ -108,36 +53,15 @@ def get_json(method: str, url: str, key: str, **params):
 
 def upsert(conn: sqlite3.Connection, table: str, keys: Dict[str, Any], update: Dict[str, Any]):
     """
-    Upsert helper compatible with a wide range of SQLite versions.
-    If 'id' is present in keys attempt to UPDATE the row first; if no row was updated, INSERT the combined data.
-    Otherwise fall back to INSERT OR REPLACE.
+    Upsert helper - now delegates to central DB module.
     """
-    cols = list({*keys.keys(), *update.keys()})
-    data = {**keys, **update}
-
-    if "id" in keys:
-        # Try to do a plain UPDATE first (avoids relying on newer SQLite 'excluded' syntax)
-        setters = ", ".join([f"{c}=:{c}" for c in update.keys()])
-        update_sql = f"UPDATE {table} SET {setters} WHERE id=:id;"
-        cur = conn.execute(update_sql, data)
-        # If no rows updated, do an INSERT
-        if cur.rowcount == 0:
-            placeholders = ", ".join([f":{c}" for c in cols])
-            insert_sql = f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({placeholders});"
-            conn.execute(insert_sql, data)
-    else:
-        # Fallback: replace whole row when no id key provided
-        placeholders = ", ".join([f":{c}" for c in cols])
-        sql = f"INSERT OR REPLACE INTO {table} ({', '.join(cols)}) VALUES ({placeholders});"
-        conn.execute(sql, data)
+    db.upsert(conn, table, keys, update)
 
 def lookup_symlink(conn: sqlite3.Connection, original_path: str) -> Optional[str]:
-    try:
-        cur = conn.execute("SELECT path FROM symlinks WHERE last_target = ? LIMIT 1", (original_path,))
-        row = cur.fetchone()
-        return row["path"] if row else None
-    except sqlite3.Error:
-        return None
+    """
+    Look up symlink path - now delegates to central DB module.
+    """
+    return db.lookup_symlink(conn, original_path)
 
 def ingest_radarr(conn: sqlite3.Connection, name: str, base: str, key: str):
     print(f"[radarr] listing movies from {name} …", flush=True)

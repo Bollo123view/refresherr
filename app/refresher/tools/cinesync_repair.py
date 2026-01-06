@@ -1,3 +1,4 @@
+"""CineSync repair tool - uses central DB module."""
 from __future__ import annotations
 
 import os
@@ -7,6 +8,7 @@ import sqlite3
 import logging
 from pathlib import Path
 from typing import Optional, Tuple, Iterable
+from app.refresher.core import db
 
 # -----------------------------
 # Logging
@@ -115,6 +117,13 @@ def _ensure_col(conn: sqlite3.Connection, table: str, col: str, ddl: str) -> Non
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
+    """
+    Ensure schema for cinesync-specific tables.
+    The central DB module handles the main schema.
+    """
+    # Initialize main schema first
+    db.initialize_schema(conn)
+    
     # Busy timeout helps a lot under concurrent writes
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
@@ -398,7 +407,7 @@ def run_repair_for_paths(paths: Iterable[str], *, dry_run: bool | None = None) -
     """
     _dry = DRY_RUN if dry_run is None else bool(dry_run)
 
-    conn = sqlite3.connect(DB_PATH, timeout=10.0)
+    conn = db.get_connection(DB_PATH)
     conn.execute("PRAGMA busy_timeout=8000;")
     ensure_schema(conn)
 
@@ -504,7 +513,7 @@ def run_repair_for_paths(paths: Iterable[str], *, dry_run: bool | None = None) -
 
 
 def run_repair() -> int:
-    conn = sqlite3.connect(DB_PATH, timeout=10.0)
+    conn = db.get_connection(DB_PATH)
     conn.execute("PRAGMA busy_timeout=8000;")
     ensure_schema(conn)
 

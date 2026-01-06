@@ -7,13 +7,15 @@
 .envrc
 .env.local
 
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
 # Runtime / local data
 data/
 *.log
-refresherr-*.zip
-*.zip.sha256
-refresherr-*.zip
-*.zip.sha256
 refresherr-*.zip
 *.zip.sha256
 *.bak
