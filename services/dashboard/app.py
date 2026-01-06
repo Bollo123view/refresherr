@@ -646,11 +646,9 @@ def api_manifest():
     This endpoint returns a detailed preview of all repair actions.
     """
     try:
-        # Import scanner to get last scan results
-        import sys
-        import os
-        sys.path.insert(0, '/app')
-        sys.path.insert(0, '/app/refresher')
+        # Import scanner using existing path configuration
+        sys.path.insert(0, _app_base)
+        sys.path.insert(0, _refresher_path)
         
         from refresher.core.scanner import scan_once
         from refresher.config import load_config

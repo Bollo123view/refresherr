@@ -19,7 +19,9 @@ function DryRunToggle() {
     }
   };
 
-  if (loading) return <div className="dryrun-toggle loading">Loading...</div>;
+  if (loading || dryrun === null) {
+    return <div className="dryrun-toggle loading">Loading...</div>;
+  }
 
   return (
     <div className="dryrun-toggle-container">

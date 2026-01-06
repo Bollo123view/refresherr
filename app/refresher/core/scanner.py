@@ -212,7 +212,8 @@ def scan_once(cfg_or_path: Any, dryrun: bool = True) -> dict:
                         except Exception:
                             pass
                 
-                # Build a payload row for manifest (includes route type and relay URL)
+                # Build a payload row for manifest
+                # Tuple structure: (path, target, resolved, kind, name, season, route_type, relay_url)
                 broken.append((str(p), target, resolved, kind, name, season, rtype, relay_url))
 
     summary = {
@@ -226,19 +227,22 @@ def scan_once(cfg_or_path: Any, dryrun: bool = True) -> dict:
     # Generate detailed manifest for dry run mode or provide sample
     manifest = []
     if broken:
-        # Include more details in manifest
-        for b in broken:
-            container_path = b[0]
+        # Convert tuples to dict for better structure
+        # Tuple: (path, target, resolved, kind, name, season, route_type, relay_url)
+        for item_tuple in broken:
+            path, target, resolved, kind, name, season, route_type, relay_url = item_tuple
+            container_path = path
             logical_path = container_to_logical(container_path, path_mappings) if path_mappings else container_path
+            
             item = {
                 "path": container_path,
-                "target": b[1],
-                "resolved": b[2],
-                "kind": b[3],
-                "name": b[4],
-                "season": b[5] if len(b) > 5 else None,
-                "route_type": b[6] if len(b) > 6 else None,
-                "relay_url": b[7] if len(b) > 7 else None
+                "target": target,
+                "resolved": resolved,
+                "kind": kind,
+                "name": name,
+                "season": season,
+                "route_type": route_type,
+                "relay_url": relay_url
             }
             # Include logical path if different from container path
             if logical_path != container_path:

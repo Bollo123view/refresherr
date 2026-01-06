@@ -134,7 +134,7 @@ export function useBrokenItems() {
  * Provides current dry run status and a toggle function.
  */
 export function useDryRun() {
-  const [dryrun, setDryrun] = useState(true);
+  const [dryrun, setDryrun] = useState(null); // Start with null to indicate loading
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -155,6 +155,7 @@ export function useDryRun() {
       .catch(err => {
         setError(err.message);
         setLoading(false);
+        setDryrun(true); // Default to safe mode on error
       });
   };
 

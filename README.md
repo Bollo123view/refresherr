@@ -643,6 +643,21 @@ curl http://localhost:8088/api/broken | jq
 
 Returns array of broken symlink objects with paths, targets, and metadata.
 
+**GET `/api/manifest`** - Dry run manifest (preview of actions)
+
+```bash
+curl http://localhost:8088/api/manifest | jq
+```
+
+Returns detailed manifest showing:
+- All broken symlinks detected
+- Routing information for each symlink
+- Relay URLs that would be called
+- Summary counts by kind and route type
+- Timestamp of scan
+
+This endpoint is especially useful for understanding what would happen when dry-run is disabled.
+
 **GET `/api/movies`** - Movie library data
 
 Returns all symlinked movies from Radarr instances.
@@ -661,6 +676,22 @@ Returns `{"ok": true}` if database is accessible.
 
 Shows row counts for all tables and schema information.
 
+**POST `/api/config/dryrun`** - Toggle dry run mode
+
+```bash
+# Enable dry run
+curl -X POST http://localhost:8088/api/config/dryrun \
+  -H "Content-Type: application/json" \
+  -d '{"dryrun": true}'
+
+# Disable dry run
+curl -X POST http://localhost:8088/api/config/dryrun \
+  -H "Content-Type: application/json" \
+  -d '{"dryrun": false}'
+```
+
+Note: This updates the environment variable for the current process. For persistent changes across restarts, update `.env` file manually.
+
 ### Example API Usage
 
 **Check if dry-run is enabled**:
@@ -676,6 +707,11 @@ curl -s http://localhost:8088/api/stats | jq '.symlinks.broken'
 **View routing for troubleshooting**:
 ```bash
 curl -s http://localhost:8088/api/routes | jq '.examples'
+```
+
+**Preview dry run manifest**:
+```bash
+curl -s http://localhost:8088/api/manifest | jq
 ```
 
 ## Troubleshooting
