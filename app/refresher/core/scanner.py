@@ -6,8 +6,16 @@ from .relay_client import build_find_link, relay_from_env
 from . import store
 # Import central config module
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import load_config, route_for_path, apply_rewrites, RefresherrConfig
+# Add parent directory to path to import config module
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+# Import from refresher.config to maintain consistent module identity
+try:
+    from refresher.config import load_config, route_for_path, apply_rewrites, RefresherrConfig
+except ImportError:
+    # Fallback for different import contexts
+    from config import load_config, route_for_path, apply_rewrites, RefresherrConfig
 
 # Legacy helpers for backward compatibility (delegate to config module)
 
