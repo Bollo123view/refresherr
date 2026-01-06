@@ -135,6 +135,9 @@ function StatsSection() {
   if (error) return <div className="section error">Error loading stats: {error}</div>;
   if (!stats) return null;
 
+  // Helper to safely extract values with defaults
+  const safeValue = (obj, key, defaultVal = 0) => obj?.[key] ?? defaultVal;
+
   return (
     <div className="section">
       <div className="section-header">
@@ -145,19 +148,19 @@ function StatsSection() {
       <div className="stats-grid">
         <StatsCard
           title="Total Symlinks"
-          value={stats.symlinks?.total || 0}
-          subtitle={`${stats.symlinks?.percentage_healthy || 0}% healthy`}
+          value={safeValue(stats.symlinks, 'total')}
+          subtitle={`${safeValue(stats.symlinks, 'percentage_healthy')}% healthy`}
           color="blue"
         />
         <StatsCard
           title="Healthy"
-          value={stats.symlinks?.ok || 0}
+          value={safeValue(stats.symlinks, 'ok')}
           subtitle="Working symlinks"
           color="green"
         />
         <StatsCard
           title="Broken"
-          value={stats.symlinks?.broken || 0}
+          value={safeValue(stats.symlinks, 'broken')}
           subtitle="Needs repair"
           color="red"
         />
@@ -166,14 +169,14 @@ function StatsSection() {
       <div className="stats-grid">
         <StatsCard
           title="Movies"
-          value={`${stats.movies?.linked || 0} / ${stats.movies?.total || 0}`}
-          subtitle={`${stats.movies?.percentage || 0}% linked`}
+          value={`${safeValue(stats.movies, 'linked')} / ${safeValue(stats.movies, 'total')}`}
+          subtitle={`${safeValue(stats.movies, 'percentage')}% linked`}
           color="purple"
         />
         <StatsCard
           title="Episodes"
-          value={`${stats.episodes?.linked || 0} / ${stats.episodes?.total || 0}`}
-          subtitle={`${stats.episodes?.percentage || 0}% linked`}
+          value={`${safeValue(stats.episodes, 'linked')} / ${safeValue(stats.episodes, 'total')}`}
+          subtitle={`${safeValue(stats.episodes, 'percentage')}% linked`}
           color="orange"
         />
       </div>

@@ -7,8 +7,14 @@ from flask import (
 import requests
 
 # Import central config module
-sys.path.insert(0, "/app")
-sys.path.insert(0, "/app/refresher")
+# Dynamically add paths based on environment
+_app_base = os.environ.get('APP_BASE', '/app')
+_refresher_path = os.path.join(_app_base, 'refresher') if os.path.exists(os.path.join(_app_base, 'refresher')) else '/app/refresher'
+if _app_base not in sys.path:
+    sys.path.insert(0, _app_base)
+if _refresher_path not in sys.path:
+    sys.path.insert(0, _refresher_path)
+
 try:
     from config import load_config, get_config, to_dict as config_to_dict, route_for_path
     CONFIG_MODULE_AVAILABLE = True

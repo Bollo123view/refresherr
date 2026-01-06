@@ -182,7 +182,7 @@ def scan_once(cfg_or_path: Any, dryrun: bool = True) -> dict:
                 # Build a payload row for history (timestamp etc.)
                 broken.append((str(p), target, resolved, kind, name, season))
                 # routing decides find type - use new or legacy routing helper
-                if isinstance(routing, list) and routing and hasattr(routing[0], 'prefix'):
+                if isinstance(routing, list) and routing and len(routing) > 0 and hasattr(routing[0], 'prefix'):
                     # New config module routing
                     rtype = route_for_path(str(p), routing) or ""
                 else:
