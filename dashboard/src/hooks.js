@@ -416,15 +416,14 @@ export function useRepair() {
   useEffect(() => {
     fetchHistory();
     fetchStatus();
-    // Poll status every 5 seconds while a repair is running
+    // Poll status every 5 seconds
     const interval = setInterval(() => {
       fetchStatus();
-      if (currentRun) {
-        fetchHistory();
-      }
+      // Refresh history periodically
+      fetchHistory();
     }, 5000);
     return () => clearInterval(interval);
-  }, [currentRun]);
+  }, []); // Empty dependency array - set up polling once on mount
 
   return { 
     history, 

@@ -22,6 +22,15 @@ except ImportError:
     CONFIG_MODULE_AVAILABLE = False
     print("Warning: Central config module not available, using legacy config")
 
+# Import orchestrator and repair modules if available
+try:
+    from refresher.core import orchestrator
+    from refresher.core import repair_runner
+    ORCHESTRATOR_AVAILABLE = True
+except ImportError:
+    ORCHESTRATOR_AVAILABLE = False
+    print("Warning: Orchestrator module not available")
+
 # ---------- Config ----------
 DATA_DIR      = os.environ.get("DATA_DIR", "/data")
 DB_PATH       = os.path.join(DATA_DIR, "symlinks.db")
@@ -716,18 +725,16 @@ def api_orchestrator_toggle():
     Toggle the auto-repair orchestrator on or off.
     Expects JSON body: {"enabled": true/false}
     """
+    if not ORCHESTRATOR_AVAILABLE:
+        return jsonify({"error": "Orchestrator module not available"}), 503
+    
     try:
-        # Import orchestrator module
-        sys.path.insert(0, _app_base)
-        sys.path.insert(0, _refresher_path)
-        from refresher.core.orchestrator import set_orchestrator_enabled, get_orchestrator_state
-        
         data = request.get_json()
         if data is None or "enabled" not in data:
             return jsonify({"error": "Missing 'enabled' field in request body"}), 400
         
         enabled = bool(data["enabled"])
-        state = set_orchestrator_enabled(enabled)
+        state = orchestrator.set_orchestrator_enabled(enabled)
         
         return jsonify({
             "success": True,
@@ -742,13 +749,12 @@ def api_orchestrator_status():
     """
     Get the current orchestrator state (enabled/disabled, last run, etc.)
     """
+    if not ORCHESTRATOR_AVAILABLE:
+        return jsonify({"error": "Orchestrator module not available"}), 503
+    
     try:
-        sys.path.insert(0, _app_base)
-        sys.path.insert(0, _refresher_path)
-        from refresher.core.orchestrator import get_orchestrator_state, get_current_repair_run
-        
-        state = get_orchestrator_state()
-        current_run = get_current_repair_run()
+        state = orchestrator.get_orchestrator_state()
+        current_run = orchestrator.get_current_repair_run()
         
         return jsonify({
             "state": state,
@@ -763,13 +769,12 @@ def api_repair_cinesync():
     Manually trigger a cinesync repair run.
     Returns run ID and status immediately, then runs repair in background.
     """
+    if not ORCHESTRATOR_AVAILABLE:
+        return jsonify({"error": "Orchestrator module not available"}), 503
+    
     try:
-        sys.path.insert(0, _app_base)
-        sys.path.insert(0, _refresher_path)
-        from refresher.core.repair_runner import run_cinesync_repair
-        
         # Run repair (this may take a while)
-        result = run_cinesync_repair(trigger="manual")
+        result = repair_runner.run_cinesync_repair(trigger="manual")
         
         return jsonify({
             "success": True,
@@ -784,13 +789,12 @@ def api_repair_arr():
     Manually trigger an ARR repair run.
     Returns run ID and status immediately, then runs repair in background.
     """
+    if not ORCHESTRATOR_AVAILABLE:
+        return jsonify({"error": "Orchestrator module not available"}), 503
+    
     try:
-        sys.path.insert(0, _app_base)
-        sys.path.insert(0, _refresher_path)
-        from refresher.core.repair_runner import run_arr_repair
-        
         # Run repair (this may take a while)
-        result = run_arr_repair(trigger="manual")
+        result = repair_runner.run_arr_repair(trigger="manual")
         
         return jsonify({
             "success": True,
@@ -804,12 +808,13 @@ def api_repair_status():
     """
     Get the status of the current repair run, if any.
     """
+    Get the status of the current repair run, if any.
+    """
+    if not ORCHESTRATOR_AVAILABLE:
+        return jsonify({"error": "Orchestrator module not available"}), 503
+    
     try:
-        sys.path.insert(0, _app_base)
-        sys.path.insert(0, _refresher_path)
-        from refresher.core.orchestrator import get_current_repair_run
-        
-        current_run = get_current_repair_run()
+        current_run = orchestrator.get_current_repair_run()
         
         if current_run:
             return jsonify({
@@ -830,15 +835,14 @@ def api_repair_history():
     Get repair run history with pagination.
     Query params: limit (default 50), offset (default 0)
     """
+    if not ORCHESTRATOR_AVAILABLE:
+        return jsonify({"error": "Orchestrator module not available"}), 503
+    
     try:
-        sys.path.insert(0, _app_base)
-        sys.path.insert(0, _refresher_path)
-        from refresher.core.orchestrator import get_repair_history
-        
         limit = int(request.args.get("limit", 50))
         offset = int(request.args.get("offset", 0))
         
-        history = get_repair_history(limit=limit, offset=offset)
+        history = orchestrator.get_repair_history(limit=limit, offset=offset)
         
         return jsonify({
             "history": history,

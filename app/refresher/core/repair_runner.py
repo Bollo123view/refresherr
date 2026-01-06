@@ -106,17 +106,17 @@ def run_cinesync_repair(
                 if "repaired:" in line.lower():
                     try:
                         repaired = int(line.split(":")[-1].strip())
-                    except:
+                    except (ValueError, IndexError):
                         pass
                 elif "skipped:" in line.lower():
                     try:
                         skipped = int(line.split(":")[-1].strip())
-                    except:
+                    except (ValueError, IndexError):
                         pass
                 elif "failed:" in line.lower():
                     try:
                         failed = int(line.split(":")[-1].strip())
-                    except:
+                    except (ValueError, IndexError):
                         pass
             
             # If we couldn't parse, estimate from broken count change
@@ -273,12 +273,12 @@ def run_arr_repair(
                 if "sent:" in line.lower():
                     try:
                         repaired = int(line.split(":")[-1].strip())
-                    except:
+                    except (ValueError, IndexError):
                         pass
                 elif "failed:" in line.lower():
                     try:
                         failed = int(line.split(":")[-1].strip())
-                    except:
+                    except (ValueError, IndexError):
                         pass
             
             # Estimate if we couldn't parse
@@ -361,6 +361,8 @@ def _trigger_post_repair_scan(conn: sqlite3.Connection):
         config_path = os.environ.get("CONFIG_FILE", "/config/config.yaml")
         try:
             config = load_config(config_path)
+            # Note: dryrun=True is correct here - it updates symlink status in DB
+            # but doesn't enqueue new repair actions (we just finished repairs)
             result = scan_once(config, dryrun=True)
         except Exception:
             # Fallback to path-based loading
