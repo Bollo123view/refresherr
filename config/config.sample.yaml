@@ -1,0 +1,210 @@
+# Refresherr Configuration Sample
+# This file demonstrates a complex configuration with multiple instances,
+# path mappings, and routing rules for a real-world deployment.
+#
+# Copy this to config.yaml and customize for your environment.
+
+# ============================================================================
+# Scanner Configuration
+# ============================================================================
+scan:
+  # Directories to scan for symlinks
+  # Multiple roots can be specified for different media libraries
+  roots:
+    - /opt/media/jelly/tv           # TV shows (general)
+    - /opt/media/jelly/hayu         # TV shows (Hayu streaming)
+    - /opt/media/jelly/4k           # 4K Movies
+    - /opt/media/jelly/movies       # Standard movies
+    - /opt/media/jelly/doc          # Documentaries
+    - /opt/media/plex/anime         # Anime library (separate Plex instance)
+  
+  # Mount points to verify before scanning
+  # Scanner will abort if any of these are not present
+  mount_checks:
+    - /mnt/remote/realdebrid        # RealDebrid rclone mount
+    - /mnt/remote/torbox            # TorBox mount (if using multiple services)
+  
+  # Path rewrites for target translation
+  # Useful when symlinks point to one path but you want to normalize to another
+  rewrites:
+    - from: /mnt/remote/realdebrid
+      to: /mnt/cloud/rd
+      # Example: /mnt/remote/realdebrid/movies/file.mkv -> /mnt/cloud/rd/movies/file.mkv
+    
+    - from: /mnt/old/media
+      to: /mnt/new/media
+      # Useful after migrating storage locations
+  
+  # Scan interval in seconds (can be overridden by SCAN_INTERVAL env var)
+  interval: 300
+  
+  # Patterns to ignore during scanning
+  # Files/directories matching these patterns will be skipped
+  ignore_patterns:
+    - cinesync          # CineSync temporary files
+    - .tmp              # Temporary files
+    - .partial          # Partial downloads
+    - .DS_Store         # macOS metadata
+    - Thumbs.db         # Windows thumbnails
+    - '@eaDir'          # Synology metadata
+
+# ============================================================================
+# Path Routing Configuration
+# ============================================================================
+# Routes are matched LONGEST-PREFIX-FIRST
+# More specific paths should come before general ones
+routing:
+  # Hayu TV shows (specific path)
+  - prefix: /opt/media/jelly/hayu
+    type: sonarr_hayu
+    # Broken symlinks here will trigger repair in sonarr_hayu instance
+
+  # 4K Movies (specific quality tier)
+  - prefix: /opt/media/jelly/4k
+    type: radarr_4k
+    # 4K content routes to dedicated 4K Radarr instance
+
+  # Documentaries (separate category)
+  - prefix: /opt/media/jelly/doc
+    type: radarr_doc
+    # Documentary content routes to specialized Radarr instance
+
+  # General movies
+  - prefix: /opt/media/jelly/movies
+    type: radarr_movie
+    # Standard quality movies
+
+  # General TV shows (catch-all for TV)
+  - prefix: /opt/media/jelly/tv
+    type: sonarr_tv
+    # Regular TV content
+
+  # Anime (separate Plex library)
+  - prefix: /opt/media/plex/anime
+    type: sonarr_anime
+    # Anime content with specialized metadata needs
+
+# Routing Examples:
+# /opt/media/jelly/hayu/Show Name/Season 1/episode.mkv → sonarr_hayu
+# /opt/media/jelly/4k/Movie (2023)/movie.mkv → radarr_4k
+# /opt/media/jelly/movies/Movie/file.mkv → radarr_movie
+# /opt/media/jelly/tv/Show/Season 1/ep.mkv → sonarr_tv
+
+# ============================================================================
+# Path Mappings (Container ↔ Host Translation)
+# ============================================================================
+# These mappings enable proper path translation when running in containers.
+# The 'container' path is what Refresherr sees inside Docker.
+# The 'logical' path is the actual path on the host system.
+path_mappings:
+  # Jellyfin symlink root
+  - container: /opt/media/jelly
+    logical: /mnt/storage/media/jellyfin
+    description: "Jellyfin media library - symlink root for all Jellyfin content"
+
+  # Plex library (separate instance)
+  - container: /opt/media/plex
+    logical: /mnt/storage/media/plex
+    description: "Plex media library - separate from Jellyfin"
+
+  # RealDebrid rclone mount (actual file storage)
+  - container: /mnt/remote/realdebrid
+    logical: /mnt/cloud-mounts/realdebrid-vfs
+    description: "RealDebrid rclone mount - actual file storage location"
+
+  # Alternative cloud storage
+  - container: /mnt/remote/torbox
+    logical: /mnt/cloud-mounts/torbox
+    description: "TorBox mount - backup/alternative cloud storage"
+
+  # Data directory (database and logs)
+  - container: /data
+    logical: /opt/refresherr/data
+    description: "Refresherr data directory - SQLite database and logs"
+
+  # Config directory
+  - container: /config
+    logical: /opt/refresherr/config
+    description: "Refresherr configuration files"
+
+# Path Mapping Examples:
+# Container path: /opt/media/jelly/tv/Show/file.mkv
+# Translates to: /mnt/storage/media/jellyfin/tv/Show/file.mkv (on host)
+#
+# This helps with:
+# - Log messages that reference host paths for easier troubleshooting
+# - API responses that can show both container and host paths
+# - External tool integration that needs host paths
+
+# ============================================================================
+# Relay Service Configuration
+# ============================================================================
+relay:
+  # Base URL and token can be set here or via environment variables
+  # Environment variables are recommended for sensitive data
+  # base_url: http://research-relay:5050
+  # token: your-secret-token-here
+  
+  # Environment variable names to use (defaults shown)
+  # The relay config will read from these env vars if values not set above
+  base_env: RELAY_BASE
+  token_env: RELAY_TOKEN
+
+# ============================================================================
+# Database Configuration
+# ============================================================================
+database:
+  # Explicit database path (optional)
+  # If not set, defaults to {data_dir}/symlinks.db
+  # path: /data/symlinks.db
+  
+  # Data directory (can be overridden by DATA_DIR env var)
+  data_dir: /data
+
+# ============================================================================
+# Notification Configuration
+# ============================================================================
+notifications:
+  # Enable/disable notifications
+  enabled: true
+  
+  # Discord webhook URL (recommended to use DISCORD_WEBHOOK env var instead)
+  # discord_webhook: https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN
+  
+  # Additional notification settings can be added here in the future
+  # (e.g., Telegram, Slack, email)
+
+# ============================================================================
+# Usage Notes
+# ============================================================================
+# 1. Configuration Precedence:
+#    Environment variables > This YAML file > Built-in defaults
+#
+# 2. Routing Best Practices:
+#    - Order routes from most specific to least specific
+#    - Test routing with: curl http://localhost:8088/api/routes
+#    - Routes are matched by longest prefix first (automatic)
+#
+# 3. Path Mapping Best Practices:
+#    - Always document your Docker volume mounts here
+#    - Keep container paths consistent across deployments
+#    - Use descriptive descriptions for troubleshooting
+#
+# 4. Security:
+#    - Store sensitive data (tokens, webhooks) in .env file
+#    - Keep this file in version control (without secrets)
+#    - Use .env for deployment-specific secrets
+#
+# 5. Testing Configuration:
+#    - Validate YAML: python -c "import yaml; yaml.safe_load(open('config.yaml'))"
+#    - Check config loading: curl http://localhost:8088/api/config
+#    - View routing: curl http://localhost:8088/api/routes
+#    - Test scan: docker exec refresher python -m refresher.cli scan-once
+#
+# 6. Troubleshooting:
+#    - Check logs: docker logs refresher
+#    - Verify mounts: docker exec refresher ls -la /mnt/remote/realdebrid
+#    - Test API: curl http://localhost:8088/api/stats
+#    - View dashboard: http://localhost:8088/
+#
+# See README_CONFIG.md for detailed documentation.
