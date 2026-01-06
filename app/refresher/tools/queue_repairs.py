@@ -132,7 +132,7 @@ def main() -> None:
     # Check for either status or last_status column
     status_col = "last_status" if "last_status" in cols else "status"
     if status_col not in cols or "path" not in cols:
-        raise SystemExit("symlinks table missing expected columns (path, status)")
+        raise SystemExit(f"symlinks table missing expected columns (path, {status_col})")
 
     # Pull broken rows
     rows = conn.execute(

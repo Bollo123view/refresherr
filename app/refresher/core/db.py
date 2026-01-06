@@ -103,6 +103,8 @@ def _create_v1_schema(conn: sqlite3.Connection):
             last_seen_utc TEXT
         )
     """)
+    # Note: Both 'status' and 'last_status' columns exist for backward compatibility.
+    # New code should use 'last_status' as the canonical status field.
     
     # Actions table - queues repair/search actions
     cur.execute("""
@@ -468,12 +470,19 @@ def upsert(conn: sqlite3.Connection, table: str, keys: dict, update: dict):
         conn.execute(sql, data)
 
 
-def add_events(rows: list[tuple]):
+def add_events(rows: list[tuple[int, str, str | None, str | None, str | None, str | None, str | None]]):
     """
     Add multiple event records to the events table.
     
     Args:
         rows: List of tuples (ts, path, target, kind, name, action, status)
+              - ts: Unix timestamp (integer)
+              - path: Symlink path (string)
+              - target: Target path or None (string or None)
+              - kind: Media type (string or None)
+              - name: Show/movie name (string or None)
+              - action: Action taken (string or None)
+              - status: Event status (string or None)
     """
     conn = get_connection()
     initialize_schema(conn)
