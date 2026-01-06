@@ -26,18 +26,121 @@ code {
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
   padding: 2rem;
-  text-align: center;
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
-.app-header h1 {
+.header-content {
+  max-width: 1400px;
+  margin: 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.header-title {
+  flex: 1;
+  min-width: 300px;
+}
+
+.header-title h1 {
   margin: 0;
   font-size: 2.5rem;
 }
 
-.app-header p {
+.header-title p {
   margin: 0.5rem 0 0 0;
   opacity: 0.9;
+}
+
+/* Dry Run Toggle Styles */
+.dryrun-toggle-container {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.dryrun-toggle {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 0.75rem 1.25rem;
+  border-radius: 8px;
+  backdrop-filter: blur(10px);
+}
+
+.toggle-label {
+  font-weight: 600;
+  font-size: 1rem;
+  white-space: nowrap;
+}
+
+.toggle-btn {
+  padding: 0.5rem 1.25rem;
+  border: 2px solid white;
+  border-radius: 24px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.toggle-btn.active {
+  background: #38ef7d;
+  color: #0f5132;
+  border-color: #38ef7d;
+}
+
+.toggle-btn.inactive {
+  background: #eb3349;
+  color: white;
+  border-color: #eb3349;
+}
+
+.toggle-btn:hover {
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+
+.toggle-status {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.toggle-message {
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  animation: fadeIn 0.3s ease;
+}
+
+.toggle-message.success {
+  background: rgba(56, 239, 125, 0.2);
+  color: #0f5132;
+  border: 1px solid rgba(56, 239, 125, 0.4);
+}
+
+.toggle-message.error {
+  background: rgba(235, 51, 73, 0.2);
+  color: #842029;
+  border: 1px solid rgba(235, 51, 73, 0.4);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.dryrun-toggle.loading {
+  opacity: 0.6;
+  pointer-events: none;
 }
 
 .app-main {

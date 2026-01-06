@@ -639,6 +639,77 @@ def api_stats():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@api.get("/manifest")
+def api_manifest():
+    """
+    Get the dry run manifest showing what actions would be performed.
+    This endpoint returns a detailed preview of all repair actions.
+    """
+    try:
+        # Import scanner using existing path configuration
+        sys.path.insert(0, _app_base)
+        sys.path.insert(0, _refresher_path)
+        
+        from refresher.core.scanner import scan_once
+        from refresher.config import load_config
+        
+        # Perform a scan to get current manifest
+        config_path = os.environ.get("CONFIG_FILE", "/config/config.yaml")
+        try:
+            config = load_config(config_path)
+            result = scan_once(config, dryrun=True)
+        except Exception:
+            # Fallback to path-based loading
+            result = scan_once(config_path, dryrun=True)
+        
+        summary = result.get("summary", {})
+        
+        return jsonify({
+            "dryrun": summary.get("dryrun", True),
+            "broken_count": summary.get("broken_count", 0),
+            "examined": summary.get("examined", 0),
+            "manifest": summary.get("manifest", []),
+            "manifest_summary": summary.get("manifest_summary", {}),
+            "timestamp": time.time()
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@api.post("/config/dryrun")
+def api_set_dryrun():
+    """
+    Toggle dry run mode on/off.
+    Expects JSON body: {"dryrun": true/false}
+    
+    Note: This updates the environment variable for the current process.
+    For persistent changes across restarts, update .env file manually.
+    """
+    try:
+        data = request.get_json()
+        if data is None or "dryrun" not in data:
+            return jsonify({"error": "Missing 'dryrun' field in request body"}), 400
+        
+        dryrun = bool(data["dryrun"])
+        
+        # Update environment variable for current process
+        os.environ["DRYRUN"] = "true" if dryrun else "false"
+        
+        # If config module is available, reload config to pick up the change
+        if CONFIG_MODULE_AVAILABLE:
+            try:
+                from config import get_config
+                config = get_config(reload=True)
+            except Exception:
+                pass
+        
+        return jsonify({
+            "success": True,
+            "dryrun": dryrun,
+            "message": f"Dry run mode {'enabled' if dryrun else 'disabled'}. Note: This change is not persistent across restarts. Update .env for persistence."
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 app.register_blueprint(api)
 
 if __name__ == "__main__":

@@ -128,3 +128,101 @@ export function useBrokenItems() {
 
   return { items, loading, error, refresh };
 }
+
+/**
+ * Custom React hook for managing dry run mode.
+ * Provides current dry run status and a toggle function.
+ */
+export function useDryRun() {
+  const [dryrun, setDryrun] = useState(null); // Start with null to indicate loading
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // Fetch current dry run status
+  const fetchStatus = () => {
+    setLoading(true);
+    fetch('/api/config')
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        return response.json();
+      })
+      .then(data => {
+        setDryrun(data.dryrun ?? true);
+        setLoading(false);
+      })
+      .catch(err => {
+        setError(err.message);
+        setLoading(false);
+        setDryrun(true); // Default to safe mode on error
+      });
+  };
+
+  // Toggle dry run mode
+  const toggleDryRun = async () => {
+    const newValue = !dryrun;
+    
+    try {
+      const response = await fetch('/api/config/dryrun', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ dryrun: newValue }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      if (data.success) {
+        setDryrun(newValue);
+        return { success: true, message: data.message };
+      } else {
+        throw new Error(data.error || 'Failed to toggle dry run');
+      }
+    } catch (err) {
+      setError(err.message);
+      return { success: false, error: err.message };
+    }
+  };
+
+  useEffect(() => {
+    fetchStatus();
+  }, []);
+
+  return { dryrun, loading, error, toggleDryRun, refresh: fetchStatus };
+}
+
+/**
+ * Custom React hook for fetching the dry run manifest.
+ * This shows what actions would be performed in dry run mode.
+ */
+export function useManifest() {
+  const [manifest, setManifest] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const fetchManifest = () => {
+    setLoading(true);
+    fetch('/api/manifest')
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        return response.json();
+      })
+      .then(data => {
+        setManifest(data);
+        setLoading(false);
+      })
+      .catch(err => {
+        setError(err.message);
+        setLoading(false);
+      });
+  };
+
+  return { manifest, loading, error, fetchManifest };
+}

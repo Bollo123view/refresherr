@@ -192,8 +192,6 @@ def scan_once(cfg_or_path: Any, dryrun: bool = True) -> dict:
 
             if not ok:
                 kind, name, season = classify(str(p))
-                # Build a payload row for history (timestamp etc.)
-                broken.append((str(p), target, resolved, kind, name, season))
                 # routing decides find type - use new or legacy routing helper
                 if isinstance(routing, list) and routing and len(routing) > 0 and hasattr(routing[0], 'prefix'):
                     # New config module routing
@@ -201,13 +199,22 @@ def scan_once(cfg_or_path: Any, dryrun: bool = True) -> dict:
                 else:
                     # Legacy dict-based routing
                     rtype = _route_for_path(str(p), routing) or ""
+                
+                relay_url = ""
                 if rtype and relay_base and relay_token:
-                    # Build a find link via the relay and enqueue
-                    url = build_find_link(relay_base, relay_token, rtype, name)
-                    try:
-                        store.enqueue_action(url=url, reason="auto-search", related_path=str(p))
-                    except Exception:
-                        pass
+                    # Build a find link via the relay
+                    relay_url = build_find_link(relay_base, relay_token, rtype, name)
+                    
+                    # Only enqueue if NOT in dry run mode
+                    if not dryrun:
+                        try:
+                            store.enqueue_action(url=relay_url, reason="auto-search", related_path=str(p))
+                        except Exception:
+                            pass
+                
+                # Build a payload row for manifest
+                # Tuple structure: (path, target, resolved, kind, name, season, route_type, relay_url)
+                broken.append((str(p), target, resolved, kind, name, season, rtype, relay_url))
 
     summary = {
         "ok": True,
@@ -216,24 +223,57 @@ def scan_once(cfg_or_path: Any, dryrun: bool = True) -> dict:
         "dryrun": dryrun,
         "mount_ok": True
     }
-    # Optionally add a small preview summary with path translation
+    
+    # Generate detailed manifest for dry run mode or provide sample
+    manifest = []
     if broken:
-        samples = []
-        for b in broken[:20]:
-            container_path = b[0]
+        # Convert tuples to dict for better structure
+        # Tuple: (path, target, resolved, kind, name, season, route_type, relay_url)
+        for item_tuple in broken:
+            path, target, resolved, kind, name, season, route_type, relay_url = item_tuple
+            container_path = path
             logical_path = container_to_logical(container_path, path_mappings) if path_mappings else container_path
-            sample = {
+            
+            item = {
                 "path": container_path,
-                "target": b[1],
-                "resolved": b[2],
-                "kind": b[3],
-                "name": b[4]
+                "target": target,
+                "resolved": resolved,
+                "kind": kind,
+                "name": name,
+                "season": season,
+                "route_type": route_type,
+                "relay_url": relay_url
             }
             # Include logical path if different from container path
             if logical_path != container_path:
-                sample["logical_path"] = logical_path
-            samples.append(sample)
-        summary["sample"] = samples
+                item["logical_path"] = logical_path
+            
+            # Add action description for dry run manifest
+            if dryrun and item["relay_url"]:
+                item["dry_run_action"] = f"Would enqueue repair via {item['route_type']}"
+            elif not dryrun and item["relay_url"]:
+                item["action"] = f"Enqueued repair via {item['route_type']}"
+            
+            manifest.append(item)
+        
+        # For backward compatibility, keep sample field with limited entries
+        summary["sample"] = manifest[:20]
+        
+        # In dry run mode, include full manifest
+        if dryrun:
+            summary["manifest"] = manifest
+            summary["manifest_summary"] = {
+                "total_broken": len(broken),
+                "would_enqueue": sum(1 for item in manifest if item.get("relay_url")),
+                "by_kind": {},
+                "by_route": {}
+            }
+            # Count by kind and route
+            for item in manifest:
+                kind = item.get("kind", "unknown")
+                route = item.get("route_type", "no_route")
+                summary["manifest_summary"]["by_kind"][kind] = summary["manifest_summary"]["by_kind"].get(kind, 0) + 1
+                summary["manifest_summary"]["by_route"][route] = summary["manifest_summary"]["by_route"].get(route, 0) + 1
 
     return {"ok": True, "summary": summary}
 
