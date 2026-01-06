@@ -143,7 +143,7 @@ relay:
   # Base URL and token can be set here or via environment variables
   # Environment variables are recommended for sensitive data
   # base_url: http://research-relay:5050
-  # token: your-secret-token-here
+  # token: REPLACE-WITH-YOUR-RELAY-TOKEN
   
   # Environment variable names to use (defaults shown)
   # The relay config will read from these env vars if values not set above

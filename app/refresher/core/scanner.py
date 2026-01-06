@@ -97,8 +97,10 @@ def scan_once(cfg_or_path: Any, dryrun: bool = True) -> dict:
     cfg_or_path: either a dict (already parsed YAML), a RefresherrConfig object, or a path string to YAML config.
     Returns a dict with summary.
     """
+    # Initialize path_mappings for all code paths (empty list for legacy compatibility)
+    path_mappings = []
+    
     # Support new config module alongside legacy dict-based config
-    path_mappings = []  # Initialize for legacy compatibility
     if isinstance(cfg_or_path, RefresherrConfig):
         # Use new config module
         config = cfg_or_path
@@ -121,7 +123,7 @@ def scan_once(cfg_or_path: Any, dryrun: bool = True) -> dict:
             relay_token = config.relay.token
             path_mappings = config.path_mappings
         except Exception:
-            # Fall back to legacy dict-based loading
+            # Fall back to legacy dict-based loading (no path_mappings support)
             cfg = _load_cfg_from_path(cfg_or_path)
             roots = _load_scan_roots(cfg)
             mounts = _load_mount_checks(cfg)
@@ -130,9 +132,9 @@ def scan_once(cfg_or_path: Any, dryrun: bool = True) -> dict:
             relay_base_env = cfg.get("relay", {}).get("base_env", "RELAY_BASE")
             relay_token_env = cfg.get("relay", {}).get("token_env", "RELAY_TOKEN")
             relay_base, relay_token = relay_from_env(relay_base_env, relay_token_env)
-            path_mappings = []
+            # path_mappings remains empty list for legacy
     else:
-        # Legacy dict-based config
+        # Legacy dict-based config (no path_mappings support)
         cfg = cfg_or_path or {}
         roots = _load_scan_roots(cfg)
         mounts = _load_mount_checks(cfg)
@@ -141,7 +143,7 @@ def scan_once(cfg_or_path: Any, dryrun: bool = True) -> dict:
         relay_base_env = cfg.get("relay", {}).get("base_env", "RELAY_BASE")
         relay_token_env = cfg.get("relay", {}).get("token_env", "RELAY_TOKEN")
         relay_base, relay_token = relay_from_env(relay_base_env, relay_token_env)
-        path_mappings = []
+        # path_mappings remains empty list for legacy
 
     # Mount checks
     for m in mounts:

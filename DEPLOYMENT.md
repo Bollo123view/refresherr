@@ -76,10 +76,10 @@ Key settings to customize:
 
 **In `.env`:**
 ```bash
-DRYRUN=true                    # Set to false to enable repairs
-RELAY_BASE=http://relay:5050   # Relay service URL
-RELAY_TOKEN=your-token-here    # Secret token for relay
-DISCORD_WEBHOOK=https://...    # Optional Discord notifications
+DRYRUN=true                              # Set to false to enable repairs
+RELAY_BASE=http://relay:5050             # Relay service URL
+RELAY_TOKEN=REPLACE-WITH-YOUR-SECRET-TOKEN  # Secret token for relay
+DISCORD_WEBHOOK=https://...              # Optional Discord notifications
 ```
 
 **In `config/config.yaml`:**
