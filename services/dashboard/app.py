@@ -808,8 +808,6 @@ def api_repair_status():
     """
     Get the status of the current repair run, if any.
     """
-    Get the status of the current repair run, if any.
-    """
     if not ORCHESTRATOR_AVAILABLE:
         return jsonify({"error": "Orchestrator module not available"}), 503
     
