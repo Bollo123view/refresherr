@@ -11,8 +11,8 @@ Future-proof repair/refresh layer for RD/rclone media symlinks.
 
 1. Copy the sample configuration:
    ```bash
-   cp config/.env.sample .env
-   cp config/config.yaml config/config.local.yaml
+   cp config/env.sample .env
+   cp config/config.sample.yaml config/config.yaml
    ```
 
 2. Edit `.env` and `config/config.yaml` to match your environment
@@ -50,7 +50,7 @@ Environment variables override YAML settings and provide sensitive data like tok
 - `DATA_DIR`: Database and logs directory (default: `/data`)
 - `DISCORD_WEBHOOK`: Discord notification webhook URL
 
-See `config/.env.sample` for a complete list with descriptions.
+See `config/env.sample` for a complete list with descriptions.
 
 ### Path Routing
 
@@ -199,10 +199,13 @@ If paths look incorrect in logs or the dashboard:
 
 ## Documentation
 
-- **[Configuration Guide](README_CONFIG.md)** - Detailed configuration documentation (you're reading it!)
+- **[Configuration Guide](README_CONFIG.md)** - Detailed configuration documentation with routing and path mapping
+- **[Deployment Guide](DEPLOYMENT.md)** - Complete deployment documentation including unified backend approach
+- **[Dashboard UX Guide](DASHBOARD_UX_GUIDE.md)** - Dashboard usage, troubleshooting, and routing visibility
 - **[Database Schema](README_DB.md)** - Comprehensive database documentation including schema, tables, and operations
+- [Dashboard Setup](README_DASHBOARD.md) - Dashboard installation and development
 - [Ingest Guide](README_INGEST.md) - Media metadata ingestion from Sonarr/Radarr
-- [Dashboard Guide](README_DASHBOARD.md) - Dashboard setup and usage
 - [Manual Tools](README_MANUAL_TOOLS.md) - Manual repair tools and utilities
 - [Replacement Guide](README_REPLACEMENT.md) - File replacement workflows
 - [Apply Manual Mode](README_APPLY_MANUAL_MODE.md) - Manual application mode
+- [Usage Examples](USAGE_EXAMPLES.md) - Common workflows and examples
