@@ -1,21 +1,46 @@
 # docker-compose.yml
+# 
+# Current Architecture:
+# - refresher: Background scanner service
+# - dashboard: Flask web UI and API
+# - research-relay: Search/repair relay service
+#
+# Future Unified Architecture (planned):
+# - unified-backend: Combined FastAPI/Flask service with:
+#   * Background scanner (async)
+#   * API endpoints (/api/*)
+#   * Static React dashboard (served from /static)
+#   * Metrics and monitoring
+# - research-relay: Search/repair relay service (unchanged)
+#
+# To prepare for unified deployment:
+# 1. Build React dashboard: cd dashboard && npm run build
+# 2. Copy build/ to services/dashboard/static/
+# 3. Update dashboard service to serve static files from /static route
+# 4. Merge refresher and dashboard containers (future enhancement)
+
 services:
   refresher:
+    # Background scanner service - monitors symlinks and enqueues repairs
+    # Uses centralized config from /config/config.yaml with environment overrides
     build:
       context: ./app
     container_name: refresher
     env_file:
       - ./.env
     environment:
+      # Legacy env vars (prefer config.yaml for new deployments)
       - SYMLINK_ROOT=/opt/media/jelly
       - MOUNT_ROOT=/mnt/remote/realdebrid
       - REFRESHER_LOG_LEVEL=INFO
       - IGNORE_SUBSTR=cinesync
+      # Config file location (defaults to /config/config.yaml)
+      # - CONFIG_FILE=/config/config.yaml
     volumes:
-      - ./config:/config:ro
-      - ./data:/data
-      - /opt/media:/opt/media:rw
-      # Left side must be the HOST path where the real files live:
+      - ./config:/config:ro          # Configuration files
+      - ./data:/data                 # Database and logs
+      - /opt/media:/opt/media:rw     # Symlink root (read-write for repairs)
+      # Actual file storage (read-only) - adjust for your setup
       - /opt/media/remote/realdebrid:/mnt/remote/realdebrid:ro
     command: ["python", "-c", "from refresher.core.scanner import run_loop; run_loop()"]
     restart: unless-stopped
@@ -50,6 +75,9 @@ services:
       start_period: 15s
 
   dashboard:
+    # Flask backend serving API and prepared for static React assets
+    # Current: API-only service
+    # Future: Will serve built React dashboard from /static route
     image: python:3.11-slim
     container_name: refresher-dashboard
     env_file:
@@ -62,9 +90,11 @@ services:
       - PORT=8088
     working_dir: /app
     volumes:
-      # app code (read-only) + DB (read-only)
+      # app code (read-only) + DB (read-write for query access)
       - ./services/dashboard:/app:ro
       - ./data:/data:rw
+      # Future: Mount built React assets
+      # - ./dashboard/build:/app/static:ro
       - /opt/refresherr/services/dashboard/templates:/app/templates
     ports:
       - "8088:8088"
