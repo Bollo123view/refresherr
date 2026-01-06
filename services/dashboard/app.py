@@ -1,27 +1,47 @@
 from __future__ import annotations
-import os, sqlite3, math, time
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
+import os, sqlite3, math, time, re
+from flask import (
+    Flask, render_template, request, redirect,
+    url_for, flash, jsonify, Blueprint
+)
 import requests
 
 # ---------- Config ----------
-DATA_DIR    = os.environ.get("DATA_DIR", "/data")
-DB_PATH     = os.path.join(DATA_DIR, "symlinks.db")
-RELAY_BASE  = os.environ.get("RELAY_BASE", "")      # e.g. http://research-relay:5050/find
-RELAY_TOKEN = os.environ.get("RELAY_TOKEN", "")
-SYMLINK_ROOT = os.environ.get("SYMLINK_ROOT", "/opt/media/jelly")
+DATA_DIR      = os.environ.get("DATA_DIR", "/data")
+DB_PATH       = os.path.join(DATA_DIR, "symlinks.db")
+RELAY_BASE    = os.environ.get("RELAY_BASE", "")   # e.g. http://research-relay:5050/find
+RELAY_TOKEN   = os.environ.get("RELAY_TOKEN", "")
+SYMLINK_ROOT  = os.environ.get("SYMLINK_ROOT", "/opt/media/jelly")
 
 # Optional routing by symlink prefix → instance
 INSTANCE_BY_PREFIX = [
-    ("/opt/media/jelly/4k",    "radarr_movie"),
-    ("/opt/media/jelly/movies","radarr_movie"),
-    ("/opt/media/jelly/tv",    "sonarr_tv"),
-    ("/opt/media/jelly/hayu",  "sonarr_hayu"),
+    ("/opt/media/jelly/4k",     "radarr_movie"),
+    ("/opt/media/jelly/movies", "radarr_movie"),
+    ("/opt/media/jelly/tv",     "sonarr_tv"),
+    ("/opt/media/jelly/hayu",   "sonarr_hayu"),
 ]
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "refresherr-demo-secret")
 
-# ---------- Helpers ----------
+# ===== Build/Rev visibility ==================================================
+REV = os.environ.get("GIT_REV", "local-dev")
+
+@app.after_request
+def _stamp_rev(resp):
+    # Helpful header to prove which build is running
+    resp.headers["X-Refresherr-Rev"] = REV
+    # Make HTML less sticky while iterating UI
+    ct = resp.headers.get("Content-Type", "")
+    if "text/html" in ct:
+        resp.headers["Cache-Control"] = "no-store, must-revalidate"
+    return resp
+
+@app.context_processor
+def inject_helpers():
+    return dict(sizeof_fmt=sizeof_fmt, build_rev=REV)
+
+# ===== DB / Helpers ==========================================================
 def db():
     p = DB_PATH
     if not os.path.exists(p):
@@ -39,17 +59,13 @@ def sizeof_fmt(num: int) -> str:
         num /= 1024.0
     return f"{num:.1f} PB"
 
-@app.context_processor
-def inject_helpers():
-    return dict(sizeof_fmt=sizeof_fmt)
-
 def pick_instance_from_path(p: str) -> str | None:
     for prefix, instance in INSTANCE_BY_PREFIX:
         if p.startswith(prefix):
             return instance
     return None
 
-# ---------- Health / DB introspection ----------
+# ===== Health / DBcheck ======================================================
 @app.route("/health")
 def health():
     try:
@@ -82,32 +98,237 @@ def dbcheck():
     except Exception as e:
         return {"error": str(e)}, 500
 
-# ---------- Counters shared by index & broken ----------
+# ===== Counters ============================================================== 
 def query_counters(cur):
     cur.execute("SELECT COUNT(*) FROM movie_files WHERE symlink_path IS NOT NULL")
     movies_linked = cur.fetchone()[0] or 0
-
     cur.execute("SELECT COUNT(*) FROM movie_files")
     movies_total = cur.fetchone()[0] or 0
-
     cur.execute("SELECT COUNT(*) FROM episode_files WHERE symlink_path IS NOT NULL")
     eps_linked = cur.fetchone()[0] or 0
-
     cur.execute("SELECT COUNT(*) FROM episode_files")
     eps_total = cur.fetchone()[0] or 0
-
     try:
         cur.execute("SELECT COUNT(*) FROM symlinks WHERE COALESCE(last_status, status)='broken'")
         broken_count = cur.fetchone()[0] or 0
     except Exception:
         broken_count = 0
-
     mov_pct = (movies_linked / movies_total * 100.0) if movies_total else 0.0
     eps_pct = (eps_linked / eps_total * 100.0) if eps_total else 0.0
-
     return movies_linked, movies_total, mov_pct, eps_linked, eps_total, eps_pct, broken_count
 
-# ---------- Home ----------
+# ===== Parsing helpers (TV/movie normalisation) ==============================
+TV_SE_PATTERN = re.compile(r"[Ss](\d{1,2})[ ._-]*[Ee](\d{1,3})")
+YEAR_PAREN_PATTERN = re.compile(r"\((\d{4})\)$")
+
+def parse_tv_from_path(p: str):
+    """Return (series_title, season_num, episode_num) from a typical TV path."""
+    parts = p.strip("/").split("/")
+    series_title = ""
+    season_num = None
+    episode_num = None
+
+    try:
+        if len(parts) >= 3 and parts[-2].lower().startswith(("season ", "series ")):
+            series_title = parts[-3]
+            try:
+                # Season 5 → 5
+                import re as _re
+                season_num = int(_re.sub(r"\D", "", parts[-2]))
+            except Exception:
+                season_num = None
+        else:
+            series_title = parts[-2] if len(parts) >= 2 else ""
+    except Exception:
+        series_title = ""
+
+    fname = os.path.basename(p)
+    m = TV_SE_PATTERN.search(fname)
+    if m:
+        try:  season_num = season_num or int(m.group(1))
+        except Exception: pass
+        try:  episode_num = int(m.group(2))
+        except Exception: pass
+
+    return series_title.strip(), season_num, episode_num
+
+def parse_year_from_title(title: str | None):
+    if not title:
+        return None
+    m = YEAR_PAREN_PATTERN.search(title)
+    if m:
+        try:
+            y = int(m.group(1))
+            if 1900 <= y <= 2100:
+                return y
+        except Exception:
+            return None
+    return None
+
+# ===== Builders shared by HTML + API ========================================
+def build_broken_items(conn):
+    rows = conn.execute("""
+        SELECT
+            path,
+            last_target,
+            COALESCE(last_status, status) AS status,
+            COALESCE(last_seen_ts, first_seen_ts, 0) AS seen_ts
+        FROM symlinks
+        WHERE COALESCE(last_status, status)='broken'
+        ORDER BY seen_ts DESC, rowid DESC
+        LIMIT 200
+    """).fetchall()
+    items = []
+    for r in rows:
+        sp = r["path"]
+        term = os.path.basename(os.path.dirname(sp))
+        items.append({
+            "path": sp,
+            "last_target": r["last_target"],
+            "term": term,
+            "status": r["status"],
+            # hints for normaliser:
+            "display_title": term,
+            "library_path": sp,
+            "target_path": r["last_target"],
+            "can_repair": True,  # broken → actionable
+        })
+    return items
+
+def build_movie_items(conn, q: str):
+    rows = conn.execute("""
+        SELECT mf.id, mf.instance, mf.quality, mf.resolution, mf.size_bytes, mf.symlink_path
+        FROM movie_files mf
+        WHERE mf.symlink_path IS NOT NULL
+        ORDER BY mf.id DESC
+    """).fetchall()
+    ql = q.strip().lower()
+    items = []
+    for r in rows:
+        sp = r["symlink_path"] or ""
+        title = os.path.basename(os.path.dirname(sp)) if sp else ""
+        if ql and ql not in title.lower():
+            continue
+        items.append({
+            "id": r["id"],
+            "instance": r["instance"],
+            "title": title,
+            "movie_title": title,
+            "quality": r["quality"],
+            "resolution": r["resolution"],
+            "size": r["size_bytes"],
+            "symlink_path": sp,
+            "display_title": title,
+            "library_path": sp,
+            "status": "ok",
+        })
+    return items
+
+def build_episode_items(conn, q: str):
+    rows = conn.execute("""
+        SELECT ef.id, ef.instance, ef.season_number, ef.quality, ef.resolution, ef.size_bytes, ef.symlink_path,
+               ef.sonarr_series_id, s.title as series_title
+        FROM episode_files ef
+        LEFT JOIN series s ON s.sonarr_id = ef.sonarr_series_id AND s.instance = ef.instance
+        WHERE ef.symlink_path IS NOT NULL
+        ORDER BY ef.id DESC
+    """).fetchall()
+    ql = q.strip().lower()
+    items = []
+    for r in rows:
+        sp = r["symlink_path"] or ""
+        epname = os.path.basename(sp) if sp else ""
+        title = (r["series_title"] or "")
+        if ql and (ql not in title.lower() and ql not in epname.lower()):
+            continue
+        items.append({
+            "id": r["id"],
+            "instance": r["instance"],
+            "series_title": title,
+            "episode_name": epname,
+            "season": r["season_number"],
+            "quality": r["quality"],
+            "resolution": r["resolution"],
+            "size": r["size_bytes"],
+            "symlink_path": sp,
+            "display_title": title or epname,
+            "library_path": sp,
+            "status": "ok",
+        })
+    return items
+
+# ===== Normaliser for UI + API ==============================================
+def _unify_item(it):
+    title = (
+        it.get("series_title")
+        or it.get("movie_title")
+        or it.get("display_title")
+        or it.get("title")
+        or it.get("name")
+        or it.get("filename")
+    )
+
+    lib_path   = (it.get("library_path") or it.get("symlink_path") or it.get("path") or "") or ""
+    target_path= it.get("target_path") or it.get("last_target")
+
+    # Determine kind
+    kind   = it.get("kind")
+    season = it.get("season")
+    episode= it.get("episode")
+
+    if not kind:
+        lp = lib_path.lower()
+        if "/tv/" in lp or "/hayu/" in lp or TV_SE_PATTERN.search(os.path.basename(lib_path or "")):
+            kind = "episode"
+        else:
+            kind = "movie"
+
+    # For episodes, parse series/season/episode from path
+    if kind == "episode":
+        series_title, s_num, e_num = parse_tv_from_path(lib_path)
+        season = season if season is not None else s_num
+        episode = episode if episode is not None else e_num
+        if title and title.lower().startswith("season "):
+            title = series_title or title
+        elif not title:
+            title = series_title
+
+    # Infer movie year if present in title
+    year = it.get("year")
+    if year is None and kind == "movie":
+        year = parse_year_from_title(title)
+
+    status = it.get("status", "ok")
+    can_repair = bool(it.get("can_repair", status == "broken"))
+
+    return {
+        "kind": kind,
+        "title": title,
+        "season": season,
+        "episode": episode,
+        "year": year,
+        "status": status,
+        "reason": it.get("reason"),
+        "can_repair": can_repair,
+        "ids": {"jellyfin": it.get("jellyfin_id"), "tmdb": it.get("tmdb_id")},
+        "paths": {"library": lib_path, "target": target_path},
+        # passthrough
+        "quality": it.get("quality"),
+        "resolution": it.get("resolution"),
+        "size": it.get("size"),
+        "instance": it.get("instance"),
+    }
+
+# ===== Pagination ============================================================
+def paginate(q, page, per_page=50):
+    total = len(q)
+    start = (page-1)*per_page
+    end = start + per_page
+    items = q[start:end]
+    pages = math.ceil(total/per_page) if per_page else 1
+    return items, total, pages
+
+# ===== HTML Routes ===========================================================
 @app.route("/")
 def index():
     conn = db()
@@ -121,120 +342,42 @@ def index():
         relay_ok=bool(RELAY_BASE and RELAY_TOKEN)
     )
 
-# ---------- Broken list ----------
 @app.get("/broken")
 def broken():
-    conn = db()
-    cur = conn.cursor()
-
-    movies_linked, movies_total, mov_pct, eps_linked, eps_total, eps_pct, broken_count = query_counters(cur)
-
-    rows = conn.execute("""
-        SELECT
-            path,
-            last_target,
-            COALESCE(last_status, status) AS status,
-            COALESCE(last_seen_ts, first_seen_ts, 0) AS seen_ts
-        FROM symlinks
-        WHERE COALESCE(last_status, status)='broken'
-        ORDER BY seen_ts DESC, rowid DESC
-        LIMIT 200
-    """).fetchall()
-
-    items = []
-    for r in rows:
-        sp = r["path"]
-        term = os.path.basename(os.path.dirname(sp))  # series/movie folder for relay term
-        items.append({
-            "path": sp,
-            "target": r["last_target"],
-            "term": term,
-            "status": r["status"]
-        })
-
+    conn = db(); cur = conn.cursor()
+    counters = query_counters(cur)
+    raw_items = build_broken_items(conn)
+    items = [_unify_item(x) for x in raw_items]
     return render_template(
         "broken.html",
         items=items,
-        movies_linked=movies_linked, movies_total=movies_total, mov_pct=mov_pct,
-        eps_linked=eps_linked, eps_total=eps_total, eps_pct=eps_pct,
-        broken=broken_count,
+        movies_linked=counters[0], movies_total=counters[1], mov_pct=counters[2],
+        eps_linked=counters[3], eps_total=counters[4], eps_pct=counters[5],
+        broken=counters[6],
         relay_ok=bool(RELAY_BASE and RELAY_TOKEN)
     )
-
-# ---------- Movies ----------
-def paginate(q, page, per_page=50):
-    total = len(q)
-    start = (page-1)*per_page
-    end = start + per_page
-    items = q[start:end]
-    pages = math.ceil(total/per_page) if per_page else 1
-    return items, total, pages
 
 @app.route("/movies")
 def movies():
     conn = db()
-    q = request.args.get("q","").strip().lower()
-    rows = conn.execute("""
-        SELECT mf.id, mf.instance, mf.quality, mf.resolution, mf.size_bytes, mf.symlink_path
-        FROM movie_files mf
-        WHERE mf.symlink_path IS NOT NULL
-        ORDER BY mf.id DESC
-    """).fetchall()
-    items = []
-    for r in rows:
-        sp = r["symlink_path"] or ""
-        title = os.path.basename(os.path.dirname(sp)) if sp else ""
-        if q and q not in title.lower():
-            continue
-        items.append({
-            "id": r["id"],
-            "instance": r["instance"],
-            "title": title,
-            "quality": r["quality"],
-            "resolution": r["resolution"],
-            "size": r["size_bytes"],
-            "symlink_path": sp
-        })
+    q = request.args.get("q","").strip()
+    raw_items = build_movie_items(conn, q)
+    items = [_unify_item(x) for x in raw_items]
     page = int(request.args.get("page", "1") or "1")
     page_items, total, pages = paginate(items, page, per_page=50)
     return render_template("movies.html", items=page_items, total=total, page=page, pages=pages, q=q)
 
-# ---------- Episodes ----------
 @app.route("/episodes")
 def episodes():
     conn = db()
-    q = request.args.get("q","").strip().lower()
-    rows = conn.execute("""
-        SELECT ef.id, ef.instance, ef.season_number, ef.quality, ef.resolution, ef.size_bytes, ef.symlink_path,
-               ef.sonarr_series_id, s.title as series_title
-        FROM episode_files ef
-        LEFT JOIN series s ON s.sonarr_id = ef.sonarr_series_id AND s.instance = ef.instance
-        WHERE ef.symlink_path IS NOT NULL
-        ORDER BY ef.id DESC
-    """).fetchall()
-    items = []
-    for r in rows:
-        sp = r["symlink_path"] or ""
-        epname = os.path.basename(sp) if sp else ""
-        title = (r["series_title"] or "")
-        if q and (q not in title.lower() and q not in epname.lower()):
-            continue
-        items.append({
-            "id": r["id"],
-            "instance": r["instance"],
-            "series_title": title,
-            "episode_name": epname,
-            "season": r["season_number"],
-            "quality": r["quality"],
-            "resolution": r["resolution"],
-            "size": r["size_bytes"],
-            "symlink_path": sp
-        })
+    q = request.args.get("q","").strip()
+    raw_items = build_episode_items(conn, q)
+    items = [_unify_item(x) for x in raw_items]
     page = int(request.args.get("page", "1") or "1")
     page_items, total, pages = paginate(items, page, per_page=50)
     return render_template("episodes.html", items=page_items, total=total, page=page, pages=pages, q=q)
 
-# ---------- Auto action (unlink → mark repairing → enqueue → relay) ----------
+# ===== Auto action ===========================================================
 @app.post("/action/auto")
 def action_auto():
     if not (RELAY_BASE and RELAY_TOKEN):
@@ -266,11 +409,9 @@ def action_auto():
     else:
         inst = typ
 
-    conn = db()
-    cur  = conn.cursor()
-    now  = int(time.time())
+    conn = db(); cur = conn.cursor(); now = int(time.time())
 
-    # Safe unlink
+    # Unlink safely
     try:
         if os.path.islink(path):
             os.unlink(path)
@@ -279,7 +420,7 @@ def action_auto():
     except Exception as e:
         flash(f"Unlink failed: {e}", "warning")
 
-    # Mark repairing & clear target
+    # Mark repairing
     try:
         cur.execute("""
             UPDATE symlinks
@@ -292,20 +433,20 @@ def action_auto():
     except Exception as e:
         flash(f"DB update failed: {e}", "danger")
 
-    # Ensure actions exists (dashboard-friendly schema) and insert
+    # Ensure actions + insert
     try:
         cur.execute("""
         CREATE TABLE IF NOT EXISTS actions (
-          id            INTEGER PRIMARY KEY AUTOINCREMENT,
-          created_ts    INTEGER  DEFAULT (strftime('%s','now')),
-          source        TEXT,
-          instance      TEXT,
-          subject_type  TEXT,
-          subject_id    INTEGER,
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          created_ts INTEGER DEFAULT (strftime('%s','now')),
+          source TEXT,
+          instance TEXT,
+          subject_type TEXT,
+          subject_id INTEGER,
           subject_title TEXT,
-          scope         TEXT,
-          status        TEXT  DEFAULT 'enqueued',
-          last_error    TEXT
+          scope TEXT,
+          status TEXT DEFAULT 'enqueued',
+          last_error TEXT
         )
         """)
         subject_type = "series" if inst.startswith("sonarr") else "movie"
@@ -320,10 +461,7 @@ def action_auto():
     # Relay call
     try:
         resp = requests.get(RELAY_BASE, params={
-            "token": RELAY_TOKEN,
-            "type": inst,
-            "scope": "auto",
-            "term": term
+            "token": RELAY_TOKEN, "type": inst, "scope": "auto", "term": term
         }, timeout=20)
         ok = 200 <= resp.status_code < 300
         msg = f"AUTO {inst} '{term}': {resp.status_code} {resp.text[:160]}"
@@ -344,6 +482,29 @@ def action_auto():
             pass
 
     return redirect(request.referrer or url_for("index"))
+
+# ===== API ===================================================================
+api = Blueprint("api", __name__, url_prefix="/api")
+
+@api.get("/broken")
+def api_broken():
+    conn = db()
+    items = [_unify_item(x) | {"status": "broken"} for x in build_broken_items(conn)]
+    return jsonify(items)
+
+@api.get("/movies")
+def api_movies():
+    conn = db()
+    items = [_unify_item(x) | {"kind": "movie"} for x in build_movie_items(conn, q="")]
+    return jsonify(items)
+
+@api.get("/episodes")
+def api_episodes():
+    conn = db()
+    items = [_unify_item(x) | {"kind": "episode"} for x in build_episode_items(conn, q="")]
+    return jsonify(items)
+
+app.register_blueprint(api)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT","8088")), debug=False)

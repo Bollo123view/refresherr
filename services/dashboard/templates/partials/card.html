@@ -1,0 +1,48 @@
+{# expects item unified by _unify_item #}
+<div class="card">
+  <div class="row">
+    <div class="title">
+      {{ item.title or "Untitled" }}
+    </div>
+    <div>
+      {% if item.status == "broken" %}
+        <span class="chip broken">broken</span>
+      {% else %}
+        <span class="chip ok">ok</span>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="meta">
+    {% if item.kind == "episode" %}
+      <span>S{{ "%02d"|format(item.season or 0) }}E{{ "%02d"|format(item.episode or 0) }}</span>
+    {% endif %}
+    {% if item.year %}<span>{{ item.year }}</span>{% endif %}
+    {% if item.quality %}<span>{{ item.quality }}</span>{% endif %}
+    {% if item.resolution %}<span>{{ item.resolution }}</span>{% endif %}
+    {% if item.size %}<span>{{ sizeof_fmt(item.size) }}</span>{% endif %}
+  </div>
+
+  <div class="muted" title="{{ item.paths.library }}">
+    {{ item.paths.library | replace('/opt/media/jelly/','') }}
+  </div>
+
+  <div class="row">
+    <div class="muted" style="font-size:12px;">
+      {% if item.paths.target %}
+        target present
+      {% else %}
+        no target
+      {% endif %}
+    </div>
+
+    <div>
+      <form class="inline" method="post" action="{{ url_for('action_auto') }}">
+        <input type="hidden" name="term" value="{{ item.title }}">
+        <input type="hidden" name="type" value="">
+        <input type="hidden" name="path" value="{{ item.paths.library }}">
+        <button class="btn primary" {% if not item.can_repair %}disabled title="Not actionable"{% endif %}>Repair</button>
+      </form>
+    </div>
+  </div>
+</div>

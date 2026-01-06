@@ -2,54 +2,55 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Refresherr{% endblock %}</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <title>Refresherr Dashboard</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
   <style>
-    :root{ --bg:#0d1117; --panel:#151a23; --muted:#a8b1bd; --dim:#e8ecf6; --text:#eef2f9;
-           --accent:#0d6efd; --line:rgba(255,255,255,0.08); --thead:#111621; }
-    body{background:var(--bg); color:var(--text);}
-    .navbar{background:rgba(10,13,19,0.97); position:sticky; top:0; z-index:1000; border-bottom:1px solid var(--line);}
-    .container-narrow{max-width:1400px;}
-    .card{background:var(--panel); border:1px solid var(--line); border-radius:1rem; box-shadow:0 10px 30px rgba(0,0,0,.25)}
-    .card-title{color:#e6ecf7; font-weight:600;}
-    .pill{padding:.3rem .55rem; border-radius:.5rem; background:#0b1220; border:1px solid var(--line); color:#d3d9e3;}
-    .stat-strong{color:var(--dim); font-weight:700;} .stat-faint{color:#cfd6e4;}
-    .btn-primary{background:var(--accent); border-color:var(--accent);} .btn-outline-light{border-color:var(--line); color:#e7eaf0;}
-    .searchbar{background:#0b0f15; border:1px solid var(--line); color:#e7eaf0;} .searchbar::placeholder{color:#8b95a5;}
-    .table{color:var(--text);} .table thead th{color:#e2e8f5; background:var(--thead); border-bottom:1px solid var(--line);}
-    .table > :not(caption) > * > *{background:transparent; border-bottom:1px solid var(--line);}
-    .table tbody tr:hover{background:rgba(255,255,255,0.03);} .table tbody tr:nth-child(odd){background:rgba(255,255,255,0.012);}
-    .text-muted{color:var(--muted)!important;} .text-dim{color:#dde4f2!important;}
-    .truncate{max-width:50vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:inline-block; vertical-align:bottom;}
-    @media (max-width:992px){ .truncate{max-width:60vw;} }
-    .relay-pill{position:absolute; right:1rem;} .w-actions{width:160px;} .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;}
-    .accordion-button{background:#0f141e; color:#e9eef7;}
-    .accordion-header .actions{margin-left:auto;}
+    :root { --bg:#0c0c0c; --card:#151515; --text:#f4f4f4; --muted:#9aa0a6; --accent:#e11d48; --ok:#10b981; --warn:#f59e0b; }
+    html, body { background: var(--bg); color: var(--text); margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    a { color: #60a5fa; text-decoration: none; }
+    header { display:flex; gap:16px; align-items:center; padding:16px 20px; border-bottom:1px solid #222; }
+    header a { padding:6px 10px; border-radius:8px; background:#1e1e1e; }
+    .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+    .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(280px,1fr)); gap:16px; }
+    .card { background: var(--card); border:1px solid #222; border-radius:14px; padding:14px; display:flex; flex-direction:column; gap:10px; }
+    .title { font-weight:600; font-size:16px; line-height:1.2; }
+    .meta { color: var(--muted); font-size:12px; display:flex; gap:8px; flex-wrap:wrap; }
+    .row { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    .btn { display:inline-block; padding:8px 10px; border-radius:10px; border:1px solid #2a2a2a; background:#202020; color:#fff; cursor:pointer; font-size:13px; }
+    .btn.primary { background: var(--accent); border-color:#b31639; }
+    .btn:disabled { opacity:.5; cursor:not-allowed; }
+    .chip { padding:3px 8px; border-radius:999px; font-size:11px; border:1px solid #2a2a2a; background:#1a1a1a; }
+    .chip.ok { color: var(--ok); border-color:#134e4a; background:#0a2523; }
+    .chip.broken { color:#fca5a5; border-color:#3a1618; background:#1a0b0c; }
+    .muted { color: var(--muted); }
+    .pager { display:flex; gap:8px; margin-top:16px; }
+    .pill { padding:6px 10px; border:1px solid #2a2a2a; border-radius:10px; background:#1a1a1a; }
+    form.inline { display:inline; }
+    footer { color:#646a72; font-size:12px; text-align:center; padding:20px 0 40px; }
+    input[type="search"]{ background:#111; color:#fff; border:1px solid #2a2a2a; border-radius:10px; padding:8px 10px; }
   </style>
 </head>
 <body>
-<nav class="navbar navbar-expand-lg navbar-dark">
-  <div class="container-fluid container-narrow position-relative">
-    <a class="navbar-brand fw-semibold" href="{{ url_for('index') }}">Refresherr</a>
-    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav" aria-controls="nav" aria-expanded="false" aria-label="Toggle navigation">
-      <span class="navbar-toggler-icon"></span>
-    </button>
-    <div class="collapse navbar-collapse" id="nav">
-      <ul class="navbar-nav me-auto mb-2 mb-lg-0">
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('broken') }}">Broken</a></li>
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('movies') }}">Movies</a></li>
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('episodes') }}">Episodes</a></li>
-      </ul>
-      {% set relay = relay_ok|default(true) %}
-      {% if relay %}<span class="badge text-bg-success relay-pill">Relay online</span>{% else %}<span class="badge text-bg-secondary relay-pill">Relay offline</span>{% endif %}
-    </div>
+  <header>
+    <strong>Refresherr</strong>
+    <a href="{{ url_for('index') }}">Overview</a>
+    <a href="{{ url_for('broken') }}">Broken</a>
+    <a href="{{ url_for('movies') }}">Movies</a>
+    <a href="{{ url_for('episodes') }}">Episodes</a>
+  </header>
+  <div class="container">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div>
+          {% for category, message in messages %}
+            <div class="pill" style="margin-bottom:8px">{{ message }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
   </div>
-</nav>
-<main class="container-fluid container-narrow py-4">
-  {% with messages = get_flashed_messages(with_categories=true) %}{% if messages %}<div class="mb-3">{% for category, message in messages %}<div class="alert alert-{{ 'danger' if category=='error' else category }}" role="alert">{{ message }}</div>{% endfor %}</div>{% endif %}{% endwith %}
-  {% block content %}{% endblock %}
-</main>
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <footer>Refresherr Dashboard</footer>
 </body>
 </html>
+

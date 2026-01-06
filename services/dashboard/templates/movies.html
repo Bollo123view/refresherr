@@ -1,41 +1,31 @@
 {% extends "base.html" %}
-{% block title %}Movies (symlinked){% endblock %}
 {% block content %}
-<h1 class="h3 mb-3">Movies (symlinked)</h1>
-<form class="input-group mb-3" method="get">
-  <input class="form-control searchbar" type="text" name="q" value="{{ q }}" placeholder="Search title…">
-  <button class="btn btn-primary" type="submit">Search</button>
-</form>
-<p class="text-muted">Results: {{ total }}</p>
-<div class="table-responsive">
-  <table class="table table-hover table-sm align-middle">
-    <thead>
-      <tr>
-        <th class="text-start" style="width:140px;">Action</th>
-        <th style="min-width:300px">Title</th>
-        <th>Quality</th>
-        <th>Size</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for it in items %}
-      <tr>
-        <td class="text-start">
-          <form method="post" action="{{ url_for('action_auto') }}">
-            <input type="hidden" name="term" value="{{ it.title }}"/>
-            <input type="hidden" name="type" value="radarr_movie"/>
-            <button class="btn btn-sm btn-primary" type="submit">Auto search</button>
-          </form>
-        </td>
-        <td class="fw-semibold text-dim">{{ it.title }}</td>
-        <td>
-          <span class="badge text-bg-secondary">{{ it.quality }}</span>
-          {% if it.resolution %}<span class="badge text-bg-dark">{{ it.resolution }}</span>{% endif %}
-        </td>
-        <td><span class="text-white">{{ sizeof_fmt(it.size or 0) }}</span></td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
+  <div class="row" style="margin-bottom:12px;">
+    <h2 style="margin:0">Movies</h2>
+    <form method="get" class="row" style="gap:8px;">
+      <input type="search" name="q" value="{{ q }}" placeholder="Filter by title…">
+      <button class="btn">Search</button>
+    </form>
+  </div>
+
+  <div class="grid">
+    {% for item in items %}
+      {% include "partials/card.html" %}
+    {% else %}
+      <div class="muted">No results.</div>
+    {% endfor %}
+  </div>
+
+  {% if pages > 1 %}
+  <div class="pager">
+    {% for p in range(1, pages+1) %}
+      {% if p == page %}
+        <span class="pill">{{ p }}</span>
+      {% else %}
+        <a class="pill" href="{{ url_for('movies', q=q, page=p) }}">{{ p }}</a>
+      {% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
 {% endblock %}
+

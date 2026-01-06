@@ -1,113 +1,228 @@
-﻿import os, time, csv, io, yaml, re
-from dataclasses import dataclass
-from typing import List, Tuple
-from .mounts import is_mount_present
-from .notifier import post_discord_simple, post_discord_file, discord_webhook_url_from_env
-from .relay_client import relay_from_env, build_find_link
-from .history import add_events
+import os, time, json, sqlite3, pathlib, requests
 
-@dataclass
-class Config:
-    roots: List[str]
-    rewrites: List[Tuple[str,str]]
-    mount_checks: List[str]
-    discord_env: str
-    relay_base_env: str
-    relay_token_env: str
+DB_PATH = "/data/symlinks.db"
+SYMLINK_ROOT = os.environ.get("SYMLINK_ROOT", "/opt/media/jelly")
+LOG_LEVEL    = os.environ.get("REFRESHER_LOG_LEVEL", "INFO").upper() 
+IGNORE_SUBSTR = os.environ.get("IGNORE_SUBSTR", "cinesync").split(",")
 
-def load_config() -> Config:
-    cfg_path = os.environ.get("CONFIG_FILE", "/config/config.yaml")
-    with open(cfg_path, "r", encoding="utf-8") as f:
-        raw = yaml.safe_load(f) or {}
-    roots = raw.get("scan", {}).get("roots", [])
-    rewrites = [(x.get("from"), x.get("to")) for x in raw.get("scan", {}).get("rewrites", [])]
-    mounts = raw.get("scan", {}).get("mount_checks", [])
-    discord_env = raw.get("notifications", {}).get("discord_webhook_env", "DISCORD_WEBHOOK")
-    relay_base_env = raw.get("relay", {}).get("base_env", "RELAY_BASE")
-    relay_token_env = raw.get("relay", {}).get("token_env", "RELAY_TOKEN")
-    return Config(roots, rewrites, mounts, discord_env, relay_base_env, relay_token_env)
-
-def rewrite_target(target: str, rewrites: List[Tuple[str,str]]) -> str:
-    for src, dst in rewrites:
-        if src and target.startswith(src):
-            return target.replace(src, dst, 1)
-    return target
-
-def classify(path: str):
-    if "/jelly/4k/" in path:
-        return ("4k", os.path.basename(os.path.dirname(path)))
-    if "/jelly/doc/" in path:
-        return ("doc", os.path.basename(os.path.dirname(path)))
-    if "/jelly/hayu/" in path:
-        base = os.path.dirname(os.path.dirname(path))
-        return ("hayu", os.path.basename(base))
-    base = os.path.dirname(os.path.dirname(path))
-    return ("tv", os.path.basename(base))
-
-def scan_once(cfg: Config, dryrun: bool = True) -> dict:
-    for m in cfg.mount_checks:
-        if not is_mount_present(m):
-            return {"ok": False, "error": f"mount not present: {m}"}
-
-    broken = []
-    for root in cfg.roots:
-        if not os.path.isdir(root):
+def is_ignored_path(p: pathlib.Path) -> bool:
+    s = str(p).lower()
+    for raw in IGNORE_SUBSTR:
+        pat = raw.strip().lower()
+        if not pat:
             continue
-        for dirpath, _, filenames in os.walk(root):
-            for name in filenames:
-                full = os.path.join(dirpath, name)
-                if not os.path.islink(full):
-                    continue
-                try:
-                    target = os.readlink(full)
-                except OSError:
-                    target = ""
-                resolved = rewrite_target(target, cfg.rewrites)
-                if not os.path.exists(resolved):
-                    kind, showname = classify(full)
-                    broken.append((full, target, resolved, kind, showname))
+        # match either as substring in full path OR as an exact folder name
+        if pat in s or any(part.lower() == pat for part in p.parts):
+            return True
+    return False
+    
+def log(level, msg):
+    levels = ["DEBUG","INFO","WARNING","ERROR"]
+    if levels.index(level) >= levels.index(LOG_LEVEL):
+        print(f"{level} refresher.scanner: {msg}", flush=True)
 
-    summary = {"ok": True, "broken_count": len(broken), "dryrun": dryrun}
-    webhook = discord_webhook_url_from_env(cfg.discord_env)
-    base_url, token = relay_from_env(cfg.relay_base_env, cfg.relay_token_env)
+def db():
+    conn = sqlite3.connect(DB_PATH, timeout=10, isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-    buf = io.StringIO()
-    w = csv.writer(buf)
-    w.writerow(["Type","Name","Path","Target","Resolved","FindLink"])
+def ensure_actions(conn):
+    c = conn.cursor()
+    c.execute("""CREATE TABLE IF NOT EXISTS actions(
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_utc    INTEGER  DEFAULT (strftime('%s','now')),
+      url            TEXT,
+      reason         TEXT,
+      related_path   TEXT,
+      source         TEXT,
+      instance       TEXT,
+      subject_type   TEXT,
+      subject_id     INTEGER,
+      subject_title  TEXT,
+      scope          TEXT,
+      status         TEXT DEFAULT 'pending',
+      last_error     TEXT
+    )""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_actions_status  ON actions(status)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_actions_created ON actions(created_utc)")
+    conn.commit()
+
+def table_cols(conn, name: str):
+    rows = conn.execute(f"PRAGMA table_info('{name}')").fetchall()
+    return {r["name"] for r in rows}
+
+def is_broken_symlink(p: pathlib.Path):
+    if not p.is_symlink():
+        return (False, None)
+    try:
+        target = os.readlink(p)
+        full = pathlib.Path(target)
+        if not full.is_absolute():
+            full = (p.parent / target).resolve()
+        return (not full.exists(), target)
+    except OSError:
+        return (True, None)
+
+def record_symlink(conn, path: str, target: str, status: str, st=None):
+    cols = table_cols(conn, "symlinks")
+    if not cols:
+        # If the table doesn't exist at all, create a minimal one compatible with your current schema.
+        conn.execute("""CREATE TABLE IF NOT EXISTS symlinks(
+            path TEXT PRIMARY KEY,
+            last_target TEXT,
+            last_status TEXT
+        )""")
+        cols = table_cols(conn, "symlinks")
+
+    # Build insert/update payload based on available columns
+    data = {"path": path}
+    if "last_target" in cols:      data["last_target"] = target
+    if "last_status" in cols:      data["last_status"] = status
+    if "status" in cols and "last_status" not in cols:  # legacy schema
+        data["status"] = status
+
+    # Optional columns
+    if "ext" in cols:              data["ext"] = pathlib.Path(path).suffix.lower()
+    if "last_size_bytes" in cols and st is not None: data["last_size_bytes"] = getattr(st, "st_size", None)
+    if "last_mtime_ns"   in cols and st is not None: data["last_mtime_ns"]   = getattr(st, "st_mtime_ns", None)
     now = int(time.time())
-    evt_rows = []
-    for (p, t, r, kind, name) in broken:
-        link_type = {"tv":"sonarr_tv","hayu":"sonarr_hayu","doc":"radarr_doc","4k":"radarr_4k"}.get(kind,"sonarr_tv")
-        find_link = build_find_link(base_url, token, link_type, name) if base_url and token else ""
-        w.writerow([kind, name, p, t, r, find_link])
-        evt_rows.append((now, p, t, kind, name, "detected", "dryrun" if dryrun else "delete"))
-    csv_bytes = buf.getvalue().encode("utf-8")
+    if "first_seen_ts" in cols:    data.setdefault("first_seen_ts", now)
+    if "last_seen_ts"  in cols:    data["last_seen_ts"] = now
+    if "is_current"    in cols:    data["is_current"] = 1
 
-    if webhook:
-        post_discord_simple(webhook, f"ðŸ§ª refresher scan (dry-run={str(dryrun).lower()}): {len(broken)} broken symlinks")
-        if broken:
-            post_discord_file(webhook, "refresher_broken.csv", csv_bytes, "Full report")
+    # INSERT ... ON CONFLICT(path) DO UPDATE SET ...
+    keys = list(data.keys())
+    placeholders = ",".join("?" for _ in keys)
+    assignments = []
+    for k in keys:
+        if k == "path": 
+            continue
+        # times_seen special handling
+        if k == "times_seen":
+            continue
+        assignments.append(f"{k}=excluded.{k}")
+    if "times_seen" in cols:
+        assignments.append("times_seen=COALESCE(times_seen,0)+1")
 
-    if evt_rows:
-        add_events(evt_rows)
+    sql = f"INSERT INTO symlinks({','.join(keys)}) VALUES({placeholders}) " \
+          f"ON CONFLICT(path) DO UPDATE SET {', '.join(assignments)}"
+    conn.execute(sql, tuple(data[k] for k in keys))
+    conn.commit()
 
-    if not dryrun:
-        for (p, _, _, _, _) in broken:
-            try: os.remove(p)
-            except OSError: pass
+def unlink_if_symlink(path: str):
+    try:
+        if os.path.islink(path):
+            os.unlink(path)
+            return True
+    except Exception as e:
+        log("WARNING", f"unlink failed {path}: {e}")
+    return False
 
-    return summary
+def update_symlink_status(conn, path: str, status: str):
+    cols = table_cols(conn, "symlinks")
+    now = int(time.time())
+    if "last_status" in cols and "last_seen_ts" in cols:
+        conn.execute("UPDATE symlinks SET last_status=?, last_seen_ts=?, is_current=1 WHERE path=?",
+                     (status, now, path))
+    elif "status" in cols:
+        conn.execute("UPDATE symlinks SET status=? WHERE path=?", (status, path))
+    else:
+        # fallback: make sure row exists
+        conn.execute("INSERT INTO symlinks(path,last_status) VALUES(?,?) ON CONFLICT(path) DO UPDATE SET last_status=excluded.last_status",
+                     (path, status))
+    conn.commit()
 
-def one_scan():
-    cfg = load_config()
-    dry = os.environ.get("DRYRUN","true").lower() == "true"
-    res = scan_once(cfg, dryrun=dry)
-    print(res)
+def scan_once():
+    conn = db()
+    ensure_actions(conn)
+    root = pathlib.Path(SYMLINK_ROOT)
+    if not root.exists():
+        log("WARNING", f"SYMLINK_ROOT missing: {SYMLINK_ROOT}")
+        return
+    n_ok = n_broken = 0
 
-def run_loop():
-    cfg = load_config()
-    dry = os.environ.get("DRYRUN","true").lower() == "true"
-    interval = int(os.environ.get("SCAN_INTERVAL","86400"))
+    for p in root.rglob("*"):
+        # ✅ skip ignored areas before any work
+        if is_ignored_path(p):
+            log("DEBUG", f"Skipping ignored path: {p}")
+            continue
+
+        if not p.is_symlink():
+            continue
+        try:
+            broken, target = is_broken_symlink(p)
+            st = p.lstat()
+        except Exception:
+            broken, target, st = True, None, None
+
+        status = "broken" if broken else "ok"
+        record_symlink(conn, str(p), target, status, st)
+        if broken: n_broken += 1
+        else: n_ok += 1
+
+    log("INFO", f"Scan summary: {n_ok+n_broken} symlinks; {n_ok} ok; {n_broken} broken")
+
+
+def get_pending(conn, limit=5):
+    return conn.execute(
+        "SELECT * FROM actions WHERE status='pending' ORDER BY created_utc LIMIT ?",
+        (limit,)
+    ).fetchall()
+
+def mark_sent(conn, action_id: int, ok: bool, err: str=None):
+    conn.execute("UPDATE actions SET status=?, last_error=? WHERE id=?",
+                 ("sent" if ok else "failed", None if ok else (err or ""), action_id))
+    conn.commit()
+
+def process_actions():
+    conn = db()
+    ensure_actions(conn)
+    rows = get_pending(conn, limit=5)
+    if not rows:
+        return
+    log("INFO", f"processing {len(rows)} pending action(s)")
+    for r in rows:
+        aid = r["id"]
+        url = r["url"]
+        related = r["related_path"]
+        try:
+            if related:
+                update_symlink_status(conn, related, "repairing")
+                unlink_if_symlink(related)
+            resp = requests.get(url, timeout=20)
+            ok = 200 <= resp.status_code < 300
+            if not ok:
+                mark_sent(conn, aid, False, f"{resp.status_code} {resp.text}")
+            else:
+                mark_sent(conn, aid, True, None)
+            log("INFO", f"ACTION {aid} -> {'OK' if ok else 'FAIL'}")
+        except Exception as e:
+            mark_sent(conn, aid, False, str(e))
+            log("ERROR", f"ACTION {aid} exception: {e}")
+
+def run_loop(interval_seconds: int = 300):
+    log("INFO", f"loop every {interval_seconds}s")
     while True:
-        scan_once(cfg, dryrun=dry)
-        time.sleep(interval)
+        try:
+            scan_once()
+        except Exception as e:
+            log("ERROR", f"scan error: {e}")
+        try:
+            process_actions()
+        except Exception as e:
+            log("ERROR", f"actions error: {e}")
+        time.sleep(interval_seconds)
+
+if __name__ == "__main__":
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--json", action="store_true")
+    args = ap.parse_args()
+    if args.json:
+        try:
+            scan_once()
+            print(json.dumps({"ok": True}))
+        except Exception as e:
+            print(json.dumps({"ok": False, "error": str(e)}))
+    else:
+        run_loop(300)

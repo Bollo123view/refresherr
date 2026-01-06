@@ -44,8 +44,12 @@ def _get(url: str, key: str, params: Dict[str,Any] | None=None) -> requests.Resp
     return requests.get(url, headers={"X-Api-Key": key}, params=params or {}, timeout=25)
 
 def _post(url: str, key: str, body: Dict[str,Any]) -> requests.Response:
-    return requests.post(url, headers={"X-Api-Key": key, "Content-Type": "application/json"},
-                         data=json.dumps(body), timeout=30)
+    return requests.post(
+        url,
+        headers={"X-Api-Key": key, "Content-Type": "application/json"},
+        data=json.dumps(body),
+        timeout=30
+    )
 
 @app.get("/health")
 def health():
@@ -54,7 +58,11 @@ def health():
 
 # ---- Helpers ----
 
-EP_RE = re.compile(r"(?P<title>.+?)\s+[Ss](?P<season>\d{1,2})[Ee](?P<episode>\d{1,3})")
+# "Title S01E02" (or S1E2)
+EP_RE = re.compile(r"(?P<title>.+?)\s+[Ss](?P<season>\d{1,2})[Ee](?P<episode>\d{1,3})\b")
+
+# "Title S02" OR "Title Season 2"
+SEASON_RE = re.compile(r"(?P<title>.+?)\s+(?:[Ss](?P<season>\d{1,2})\b|Season\s+(?P<season2>\d{1,2})\b)", re.IGNORECASE)
 
 def parse_tv_auto(term: str):
     m = EP_RE.match(term or "")
@@ -64,6 +72,16 @@ def parse_tv_auto(term: str):
         "title": m.group("title").strip(),
         "season": int(m.group("season")),
         "episode": int(m.group("episode")),
+    }
+
+def parse_tv_season(term: str):
+    m = SEASON_RE.match(term or "")
+    if not m:
+        return None
+    season = m.group("season") or m.group("season2")
+    return {
+        "title": (m.group("title") or "").strip(),
+        "season": int(season),
     }
 
 def best_series_match(items: List[Dict[str,Any]], title: str) -> Dict[str,Any] | None:
@@ -79,6 +97,16 @@ def best_series_match(items: List[Dict[str,Any]], title: str) -> Dict[str,Any] |
             best = best or it
     return best or (items[0] if items else None)
 
+def resolve_series_id(base: str, key: str, title: str) -> tuple[int, str] | None:
+    r = _get(f"{base}/api/v3/series/lookup", key, params={"term": title})
+    if r.status_code >= 400:
+        raise ValueError(f"lookup failed {r.status_code}: {r.text}")
+    series_list = r.json() or []
+    chosen = best_series_match(series_list, title)
+    if not chosen or not chosen.get("id"):
+        return None
+    return int(chosen["id"]), (chosen.get("title") or title)
+
 # ---- Main entrypoint ----
 
 @app.get("/find")
@@ -90,7 +118,7 @@ def find():
 
     type_name = request.args.get("type","").strip()
     scope     = request.args.get("scope","").strip()
-    term      = request.args.get("term","")  # used by auto and series/movie lookups
+    term      = request.args.get("term","")  # used by auto/season and lookups
 
     try:
         cfg = _pick(type_name)
@@ -104,21 +132,18 @@ def find():
             if scope in ("auto","movie"):
                 if not term:
                     return jsonify(ok=False, error="term required"), 400
-                # lookup finds existing/known movies (or discoverable ones)
                 r = _get(f"{base}/api/v3/movie/lookup", key, params={"term": term})
                 if r.status_code >= 400:
                     return jsonify(ok=False, error=f"lookup failed {r.status_code}", detail=r.text), 400
                 items = r.json() or []
                 if not items:
                     return jsonify(ok=False, action="MoviesSearch", code=404, detail="no matches")
-                # choose the best existing item that *already* has a radarr id
-                # (MoviesSearch requires Radarr's internal movie id)
                 chosen = None
                 for it in items:
                     if it.get("id"):
-                        chosen = it; break
+                        chosen = it
+                        break
                 if not chosen:
-                    # fallback: if none are already in Radarr, return the first and explain
                     return jsonify(ok=False, action="MoviesSearch", code=409,
                                    detail="movie not in Radarr library; add it first", sample=items[0]), 409
 
@@ -150,7 +175,6 @@ def find():
                 episode   = request.args.get("episode")
                 if not (series_id and season and episode):
                     return jsonify(ok=False, error="id, season, episode required"), 400
-                # find the episode id
                 er = _get(f"{base}/api/v3/episode", key, params={
                     "seriesId": series_id, "seasonNumber": season, "episodeNumber": episode
                 })
@@ -167,23 +191,38 @@ def find():
                                seriesId=int(series_id), season=int(season), episode=int(episode),
                                episodeIds=ep_ids)
 
+            # ✅ NEW: season search
+            if scope == "season":
+                if not term:
+                    return jsonify(ok=False, error="term required"), 400
+                parsed = parse_tv_season(term)
+                if not parsed:
+                    return jsonify(ok=False, error="could not parse 'Title Sxx' or 'Title Season N'"), 400
+
+                resolved = resolve_series_id(base, key, parsed["title"])
+                if not resolved:
+                    return jsonify(ok=False, error="series not found"), 404
+                series_id, series_title = resolved
+
+                cmd = {"name": "SeasonSearch", "seriesId": series_id, "seasonNumber": parsed["season"]}
+                pr = _post(f"{base}/api/v3/command", key, cmd)
+                return jsonify(ok=200 <= pr.status_code < 300,
+                               action="SeasonSearch", code=pr.status_code,
+                               seriesId=series_id, season=parsed["season"], title=series_title,
+                               body=cmd)
+
             if scope == "auto":
                 if not term:
                     return jsonify(ok=False, error="term required"), 400
                 parsed = parse_tv_auto(term)
                 if not parsed:
                     return jsonify(ok=False, error="could not parse 'Title SxxEyy'"), 400
-                # series lookup, pick best match
-                r = _get(f"{base}/api/v3/series/lookup", key, params={"term": parsed["title"]})
-                if r.status_code >= 400:
-                    return jsonify(ok=False, error=f"lookup failed {r.status_code}", detail=r.text), 400
-                series_list = r.json() or []
-                chosen = best_series_match(series_list, parsed["title"])
-                if not chosen or not chosen.get("id"):
-                    return jsonify(ok=False, error="series not found"), 404
-                series_id = chosen["id"]
 
-                # resolve episode id(s) for the given S/E
+                resolved = resolve_series_id(base, key, parsed["title"])
+                if not resolved:
+                    return jsonify(ok=False, error="series not found"), 404
+                series_id, series_title = resolved
+
                 er = _get(f"{base}/api/v3/episode", key, params={
                     "seriesId": series_id,
                     "seasonNumber": parsed["season"],
@@ -201,7 +240,7 @@ def find():
                 return jsonify(ok=200 <= pr.status_code < 300,
                                action="EpisodeSearch", code=pr.status_code,
                                seriesId=series_id, season=parsed["season"], episode=parsed["episode"],
-                               episodeIds=ep_ids, title=chosen.get("title"))
+                               episodeIds=ep_ids, title=series_title)
 
             return jsonify(ok=False, error=f"unsupported scope for sonarr: {scope}"), 400
 
