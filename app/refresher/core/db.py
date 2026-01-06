@@ -16,6 +16,7 @@ Schema Overview:
 
 Schema Version History:
 - v1: Initial schema with all tables
+- v2: Added repair orchestrator tables (repair_runs, repair_stats, orchestrator_state)
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ import threading
 from typing import Optional
 
 # Current schema version
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Database path from environment or default
 DEFAULT_DB = os.path.join(os.environ.get("DATA_DIR", "/data"), "symlinks.db")
@@ -212,6 +213,71 @@ def _create_v1_schema(conn: sqlite3.Connection):
     conn.commit()
 
 
+def _migrate_v1_to_v2(conn: sqlite3.Connection):
+    """
+    Migrate from v1 to v2 schema.
+    
+    Adds repair orchestrator tables:
+    - repair_runs: Tracks individual repair runs (manual or automatic)
+    - repair_stats: Detailed statistics per repair run
+    - orchestrator_state: Stores orchestrator configuration (enabled/disabled, etc.)
+    """
+    cur = conn.cursor()
+    
+    # Repair runs table - tracks each repair execution
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS repair_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_type TEXT NOT NULL,
+            repair_source TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'running',
+            trigger TEXT NOT NULL,
+            started_utc TEXT NOT NULL,
+            completed_utc TEXT,
+            broken_found INTEGER DEFAULT 0,
+            repaired INTEGER DEFAULT 0,
+            skipped INTEGER DEFAULT 0,
+            failed INTEGER DEFAULT 0,
+            error_message TEXT
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_repair_runs_status ON repair_runs(status)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_repair_runs_started ON repair_runs(started_utc)")
+    
+    # Repair stats table - detailed per-item stats for each run
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS repair_stats (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NOT NULL,
+            symlink_path TEXT NOT NULL,
+            result TEXT NOT NULL,
+            details TEXT,
+            timestamp_utc TEXT NOT NULL,
+            FOREIGN KEY (run_id) REFERENCES repair_runs(id) ON DELETE CASCADE
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_repair_stats_run_id ON repair_stats(run_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_repair_stats_result ON repair_stats(result)")
+    
+    # Orchestrator state table - stores orchestrator configuration
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS orchestrator_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            enabled INTEGER NOT NULL DEFAULT 0,
+            last_auto_run_utc TEXT,
+            updated_utc TEXT NOT NULL
+        )
+    """)
+    
+    # Insert initial orchestrator state (disabled by default)
+    cur.execute("""
+        INSERT OR IGNORE INTO orchestrator_state (id, enabled, updated_utc)
+        VALUES (1, 0, ?)
+    """, (dt.datetime.utcnow().isoformat(),))
+    
+    conn.commit()
+
+
 def initialize_schema(conn: Optional[sqlite3.Connection] = None) -> sqlite3.Connection:
     """
     Initialize or upgrade the database schema to the current version.
@@ -249,6 +315,15 @@ def initialize_schema(conn: Optional[sqlite3.Connection] = None) -> sqlite3.Conn
         #     _migrate_v1_to_v2(conn)
         #     conn.execute(...)
         #     current_version = 2
+        
+        if current_version < 2:
+            _migrate_v1_to_v2(conn)
+            conn.execute(
+                "INSERT INTO schema_version (version, applied_utc) VALUES (?, ?)",
+                (2, dt.datetime.utcnow().isoformat())
+            )
+            conn.commit()
+            current_version = 2
     
     return conn
 
