@@ -4,18 +4,23 @@ Future-proof repair/refresh layer for RD/rclone media symlinks.
 
 ## Features
 
+- **Always-on auto-scan** - Background scanner monitors symlinks continuously, updating dashboard status
+- **Auto-repair orchestrator** - Configurable auto-repair (OFF by default) that coordinates repair attempts: cinesync → arr → manual
+- **Manual repair buttons** - Dashboard controls for on-demand Cinesync and ARR repairs with live stats
+- **Post-repair auto-scan** - Automatic scan after each repair to ensure accurate status
 - **Mount-aware scanner** with dry-run mode enabled by default
 - **Dry-run manifest** - preview all actions before applying changes
 - **Discord notifications** + one-click "Find" via relay
-- **SQLite history** - track all symlink status changes
+- **SQLite history** - track all symlink status changes and repair runs
 - **Dockerized** - no cron needed, built-in scheduling
 - **Central configuration** with path routing and container↔host mapping
-- **Web Dashboard** - React-based UI with real-time stats and dry-run toggle
+- **Web Dashboard** - React-based UI with real-time stats, toggles, and repair controls
 
 ## Table of Contents
 
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+- [Auto-Scan & Repair](#auto-scan--repair)
 - [Dry Run Mode](#dry-run-mode)
 - [Configuration](#configuration)
 - [Dashboard](#dashboard)
@@ -200,6 +205,119 @@ After installation, here's how to use Refresherr:
 6. **Disable dry-run**: When ready, set `DRYRUN=false` in `.env` or toggle in the dashboard
 
 7. **Monitor repairs**: Watch the dashboard for repair status and statistics
+
+## Auto-Scan & Repair
+
+Refresherr provides comprehensive automatic scanning and repair capabilities with fine-grained control.
+
+### Always-On Auto-Scan
+
+The scanner runs continuously in the background, monitoring your symlinks at the configured interval (default: 5 minutes).
+
+**What the scanner does:**
+- ✅ Scans all configured roots for symlinks
+- ✅ Checks each symlink's target and status (broken/healthy)
+- ✅ Updates the database with current status
+- ✅ Updates dashboard statistics in real-time
+- ✅ Runs at startup and periodically (no user toggle required)
+
+**Configuration:**
+```bash
+# In .env or environment
+SCAN_INTERVAL=300  # Seconds between scans (default: 300 = 5 minutes)
+```
+
+The scanner is always active and provides real-time visibility into your symlink health. No user action is required to enable scanning—it starts automatically when the `refresher` container launches.
+
+### Auto-Repair Orchestrator
+
+The auto-repair orchestrator is **disabled by default** and must be explicitly enabled via the dashboard or API.
+
+**When enabled, the orchestrator:**
+1. 🎬 **Cinesync Repair** - Attempts to hotswap broken symlinks from your CineSync library
+2. 📡 **ARR Repair** - Triggers Sonarr/Radarr searches for any remaining broken items
+3. 🔄 **Post-Repair Scan** - Automatically runs a scan to update status after repairs
+
+**Enabling the orchestrator:**
+
+Via Dashboard:
+1. Navigate to `http://localhost:8088`
+2. Find the "Auto-Repair Orchestrator" section
+3. Click the toggle to enable (it will show "🟢 ENABLED")
+
+Via API:
+```bash
+curl -X POST http://localhost:8088/api/orchestrator/toggle \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": true}'
+```
+
+**Important:** The orchestrator toggle state is stored in the database and persists across restarts.
+
+### Manual Repair Buttons
+
+The dashboard provides two manual repair buttons that work independently of the orchestrator:
+
+#### 🎬 Run Cinesync Repair Now
+- Manually triggers a Cinesync repair run
+- Attempts to match broken symlinks with files in your CineSync library
+- Shows live stats: found, repaired, skipped, failed
+- Results appear immediately in the repair history
+
+Configuration required:
+```bash
+# In .env
+CINESYNC_BASE=/opt/media/jelly/cinesync/CineSync
+CINESYNC_REPAIR_ROOTS=/opt/media/jelly/tv,/opt/media/jelly/hayu
+```
+
+#### 📡 Run ARR Repair Now
+- Manually triggers ARR (Sonarr/Radarr) repair run
+- Queues search actions and processes them via the relay service
+- Shows live stats during execution
+- Updates dashboard upon completion
+
+Configuration required:
+```bash
+# In .env
+RELAY_BASE=http://research-relay:5050
+RELAY_TOKEN=your-token-here
+ROUTE_MAP=/opt/media/jelly/tv=sonarr_tv,/opt/media/jelly/movies=radarr_movie
+```
+
+### Post-Repair Auto-Scan
+
+After **every** repair run (whether manual or automatic), Refresherr automatically triggers a scan to ensure:
+- Database is up-to-date with current symlink status
+- Dashboard shows accurate broken/healthy counts
+- Repair effectiveness is immediately visible
+
+This happens automatically—no configuration needed.
+
+### Repair History & Statistics
+
+All repair runs are tracked in the database and visible in the dashboard:
+
+- **Repair History Table** - Shows recent runs with:
+  - Date/Time of execution
+  - Repair source (cinesync, arr)
+  - Trigger type (manual, auto)
+  - Status (running, completed, failed)
+  - Statistics (found, repaired, skipped, failed)
+
+- **Live Repair Status** - When a repair is running:
+  - Shows current repair source
+  - Displays live statistics
+  - Updates automatically during execution
+
+Access via dashboard at `http://localhost:8088` or via API:
+```bash
+# Get repair history
+curl http://localhost:8088/api/repair/history
+
+# Check if a repair is currently running
+curl http://localhost:8088/api/repair/status
+```
 
 ## Dry Run Mode
 
@@ -428,6 +546,10 @@ The web-based dashboard provides a user-friendly interface for monitoring and ma
 ### Features
 
 - **Real-time statistics**: View symlink health, broken counts, and repair status
+- **Auto-repair orchestrator toggle**: Enable/disable automatic repairs (OFF by default)
+- **Manual repair buttons**: On-demand Cinesync and ARR repairs with live stats
+- **Repair history**: Complete log of all repair runs with detailed statistics
+- **Live repair status**: Real-time updates during active repair runs
 - **Dry-run toggle**: Enable/disable dry-run mode with one click
 - **Configuration visibility**: See current routing, path mappings, and settings
 - **Broken symlink list**: Browse and manually trigger repairs for broken symlinks
@@ -460,6 +582,57 @@ The toggle state is synchronized with the backend and persists across sessions.
 **Visual indicators**:
 - 🟢 **Green toggle** = Dry-run ON (safe mode)
 - 🔴 **Red toggle** = Dry-run OFF (active repairs)
+
+### Auto-Repair Orchestrator Toggle
+
+The dashboard includes an **Auto-Repair Orchestrator** section with a toggle control:
+
+- **Toggle OFF (default)**: Automatic repairs disabled - manual control only
+- **Toggle ON**: Automatic repairs enabled - orchestrator will attempt repairs for broken symlinks
+
+When enabled, the orchestrator automatically sequences:
+1. Cinesync repair (hotswap from library)
+2. ARR repair (Sonarr/Radarr searches)
+3. Post-repair scan (status update)
+
+The orchestrator state persists in the database across restarts.
+
+### Manual Repair Buttons
+
+Two prominent buttons allow on-demand repair execution:
+
+**🎬 Run Cinesync Repair Now**
+- Triggers immediate Cinesync repair
+- Shows live progress and statistics
+- Results appear in repair history
+
+**📡 Run ARR Repair Now**
+- Triggers immediate ARR repair
+- Queues and processes relay actions
+- Updates dashboard upon completion
+
+Both buttons work independently of the orchestrator toggle. Use them for:
+- Testing repair functionality
+- One-off repair runs
+- Targeted repairs after configuration changes
+
+### Repair History & Live Status
+
+The dashboard displays comprehensive repair tracking:
+
+**Repair History Table:**
+- Date/time of each repair run
+- Repair source (cinesync, arr)
+- Trigger type (manual, auto)
+- Status (running, completed, failed)
+- Statistics: found, repaired, skipped, failed
+
+**Live Status Display:**
+When a repair is running, shows:
+- Current repair source
+- Real-time statistics
+- Progress indicators
+- Auto-refreshes every 5 seconds
 
 ### Dashboard Pages
 
@@ -519,6 +692,36 @@ Default: `/data/symlinks.db` (configurable via `DATA_DIR` environment variable)
 **movie_files** / **episode_files** - File metadata with symlink paths
 - Ingested from Sonarr/Radarr APIs
 - Links library content to symlinks
+
+### Repair Orchestrator Tables
+
+**repair_runs** - Tracks individual repair executions
+- `id` (PRIMARY KEY): Auto-incrementing run ID
+- `run_type`: Type of run (repair, scan)
+- `repair_source`: Source of repair (cinesync, arr, manual)
+- `status`: Run status (running, completed, failed)
+- `trigger`: How run was triggered (manual, auto, scheduled)
+- `started_utc`: When run started
+- `completed_utc`: When run completed
+- `broken_found`: Number of broken symlinks found
+- `repaired`: Number successfully repaired
+- `skipped`: Number skipped
+- `failed`: Number that failed repair
+- `error_message`: Error details if run failed
+
+**repair_stats** - Detailed per-item repair statistics
+- `id` (PRIMARY KEY): Auto-incrementing stat ID
+- `run_id`: Foreign key to repair_runs
+- `symlink_path`: Path to symlink being repaired
+- `result`: Result of repair (repaired, skipped, failed)
+- `details`: Additional details about the repair
+- `timestamp_utc`: When repair was attempted
+
+**orchestrator_state** - Orchestrator configuration
+- `id`: Always 1 (singleton)
+- `enabled`: Whether auto-repair is enabled (0/1)
+- `last_auto_run_utc`: Timestamp of last automatic run
+- `updated_utc`: When state was last modified
 
 ### Database Operations
 
@@ -692,6 +895,94 @@ curl -X POST http://localhost:8088/api/config/dryrun \
 
 Note: This updates the environment variable for the current process. For persistent changes across restarts, update `.env` file manually.
 
+### Orchestrator Endpoints
+
+**POST `/api/orchestrator/toggle`** - Enable/disable auto-repair orchestrator
+
+```bash
+# Enable orchestrator
+curl -X POST http://localhost:8088/api/orchestrator/toggle \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": true}'
+
+# Disable orchestrator
+curl -X POST http://localhost:8088/api/orchestrator/toggle \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": false}'
+```
+
+Returns the updated orchestrator state and confirmation message. State persists in database across restarts.
+
+**GET `/api/orchestrator/status`** - Get orchestrator state
+
+```bash
+curl http://localhost:8088/api/orchestrator/status | jq
+```
+
+Returns:
+- `enabled`: Boolean indicating if auto-repair is enabled
+- `last_auto_run_utc`: Timestamp of last automatic repair run
+- `updated_utc`: When state was last modified
+- `current_run`: Details of currently running repair, if any
+
+### Repair Endpoints
+
+**POST `/api/repair/cinesync`** - Manually trigger Cinesync repair
+
+```bash
+curl -X POST http://localhost:8088/api/repair/cinesync \
+  -H "Content-Type: application/json"
+```
+
+Initiates a Cinesync repair run. Returns:
+- `run_id`: ID of the repair run
+- `status`: "completed" or "failed"
+- `broken_found`: Number of broken symlinks found
+- `repaired`: Number successfully repaired
+- `skipped`: Number skipped
+- `failed`: Number that failed repair
+- `error_message`: Error details if failed
+
+**POST `/api/repair/arr`** - Manually trigger ARR repair
+
+```bash
+curl -X POST http://localhost:8088/api/repair/arr \
+  -H "Content-Type: application/json"
+```
+
+Initiates an ARR (Sonarr/Radarr) repair run. Returns same structure as Cinesync endpoint.
+
+**GET `/api/repair/status`** - Get current repair run status
+
+```bash
+curl http://localhost:8088/api/repair/status | jq
+```
+
+Returns:
+- `running`: Boolean indicating if a repair is active
+- `run`: Details of current repair run (if running)
+  - Source, trigger, start time
+  - Live statistics (found, repaired, skipped, failed)
+
+**GET `/api/repair/history`** - Get repair run history
+
+```bash
+# Get last 50 runs (default)
+curl http://localhost:8088/api/repair/history | jq
+
+# Get last 100 runs
+curl http://localhost:8088/api/repair/history?limit=100 | jq
+
+# Paginate (skip first 50)
+curl http://localhost:8088/api/repair/history?limit=50&offset=50 | jq
+```
+
+Returns array of repair runs with:
+- ID, date/time, source, trigger
+- Status (running, completed, failed)
+- Statistics for each run
+- Error messages for failed runs
+
 ### Example API Usage
 
 **Check if dry-run is enabled**:
@@ -712,6 +1003,32 @@ curl -s http://localhost:8088/api/routes | jq '.examples'
 **Preview dry run manifest**:
 ```bash
 curl -s http://localhost:8088/api/manifest | jq
+```
+
+**Enable auto-repair orchestrator**:
+```bash
+curl -X POST http://localhost:8088/api/orchestrator/toggle \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": true}' | jq
+```
+
+**Check orchestrator status**:
+```bash
+curl -s http://localhost:8088/api/orchestrator/status | jq '.state.enabled'
+```
+
+**Trigger manual repair**:
+```bash
+# Cinesync repair
+curl -X POST http://localhost:8088/api/repair/cinesync | jq
+
+# ARR repair
+curl -X POST http://localhost:8088/api/repair/arr | jq
+```
+
+**View repair history**:
+```bash
+curl -s http://localhost:8088/api/repair/history | jq '.history[] | {date: .started_utc, source: .repair_source, repaired: .repaired, failed: .failed}'
 ```
 
 ## Troubleshooting
