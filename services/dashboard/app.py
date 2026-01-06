@@ -710,6 +710,144 @@ def api_set_dryrun():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@api.post("/orchestrator/toggle")
+def api_orchestrator_toggle():
+    """
+    Toggle the auto-repair orchestrator on or off.
+    Expects JSON body: {"enabled": true/false}
+    """
+    try:
+        # Import orchestrator module
+        sys.path.insert(0, _app_base)
+        sys.path.insert(0, _refresher_path)
+        from refresher.core.orchestrator import set_orchestrator_enabled, get_orchestrator_state
+        
+        data = request.get_json()
+        if data is None or "enabled" not in data:
+            return jsonify({"error": "Missing 'enabled' field in request body"}), 400
+        
+        enabled = bool(data["enabled"])
+        state = set_orchestrator_enabled(enabled)
+        
+        return jsonify({
+            "success": True,
+            "state": state,
+            "message": f"Auto-repair orchestrator {'enabled' if enabled else 'disabled'}"
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@api.get("/orchestrator/status")
+def api_orchestrator_status():
+    """
+    Get the current orchestrator state (enabled/disabled, last run, etc.)
+    """
+    try:
+        sys.path.insert(0, _app_base)
+        sys.path.insert(0, _refresher_path)
+        from refresher.core.orchestrator import get_orchestrator_state, get_current_repair_run
+        
+        state = get_orchestrator_state()
+        current_run = get_current_repair_run()
+        
+        return jsonify({
+            "state": state,
+            "current_run": current_run
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@api.post("/repair/cinesync")
+def api_repair_cinesync():
+    """
+    Manually trigger a cinesync repair run.
+    Returns run ID and status immediately, then runs repair in background.
+    """
+    try:
+        sys.path.insert(0, _app_base)
+        sys.path.insert(0, _refresher_path)
+        from refresher.core.repair_runner import run_cinesync_repair
+        
+        # Run repair (this may take a while)
+        result = run_cinesync_repair(trigger="manual")
+        
+        return jsonify({
+            "success": True,
+            "result": result
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@api.post("/repair/arr")
+def api_repair_arr():
+    """
+    Manually trigger an ARR repair run.
+    Returns run ID and status immediately, then runs repair in background.
+    """
+    try:
+        sys.path.insert(0, _app_base)
+        sys.path.insert(0, _refresher_path)
+        from refresher.core.repair_runner import run_arr_repair
+        
+        # Run repair (this may take a while)
+        result = run_arr_repair(trigger="manual")
+        
+        return jsonify({
+            "success": True,
+            "result": result
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@api.get("/repair/status")
+def api_repair_status():
+    """
+    Get the status of the current repair run, if any.
+    """
+    try:
+        sys.path.insert(0, _app_base)
+        sys.path.insert(0, _refresher_path)
+        from refresher.core.orchestrator import get_current_repair_run
+        
+        current_run = get_current_repair_run()
+        
+        if current_run:
+            return jsonify({
+                "running": True,
+                "run": current_run
+            })
+        else:
+            return jsonify({
+                "running": False,
+                "run": None
+            })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@api.get("/repair/history")
+def api_repair_history():
+    """
+    Get repair run history with pagination.
+    Query params: limit (default 50), offset (default 0)
+    """
+    try:
+        sys.path.insert(0, _app_base)
+        sys.path.insert(0, _refresher_path)
+        from refresher.core.orchestrator import get_repair_history
+        
+        limit = int(request.args.get("limit", 50))
+        offset = int(request.args.get("offset", 0))
+        
+        history = get_repair_history(limit=limit, offset=offset)
+        
+        return jsonify({
+            "history": history,
+            "limit": limit,
+            "offset": offset
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 app.register_blueprint(api)
 
 if __name__ == "__main__":
