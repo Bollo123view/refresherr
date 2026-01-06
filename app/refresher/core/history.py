@@ -6,7 +6,7 @@ All actual database logic is now handled by the central db module.
 """
 import os, sqlite3, time
 from typing import Iterable
-from .core import db
+from . import db
 
 def _db_path() -> str:
     """Get database path - kept for backward compatibility."""
