@@ -12,10 +12,16 @@ if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 # Import from refresher.config to maintain consistent module identity
 try:
-    from refresher.config import load_config, route_for_path, apply_rewrites, RefresherrConfig
+    from refresher.config import (
+        load_config, route_for_path, apply_rewrites, RefresherrConfig,
+        container_to_logical, logical_to_container
+    )
 except ImportError:
     # Fallback for different import contexts
-    from config import load_config, route_for_path, apply_rewrites, RefresherrConfig
+    from config import (
+        load_config, route_for_path, apply_rewrites, RefresherrConfig,
+        container_to_logical, logical_to_container
+    )
 
 # Legacy helpers for backward compatibility (delegate to config module)
 
@@ -92,6 +98,7 @@ def scan_once(cfg_or_path: Any, dryrun: bool = True) -> dict:
     Returns a dict with summary.
     """
     # Support new config module alongside legacy dict-based config
+    path_mappings = []  # Initialize for legacy compatibility
     if isinstance(cfg_or_path, RefresherrConfig):
         # Use new config module
         config = cfg_or_path
@@ -101,6 +108,7 @@ def scan_once(cfg_or_path: Any, dryrun: bool = True) -> dict:
         routing = config.routing
         relay_base = config.relay.base_url
         relay_token = config.relay.token
+        path_mappings = config.path_mappings
     elif isinstance(cfg_or_path, str):
         # Try loading with new config module first
         try:
@@ -111,6 +119,7 @@ def scan_once(cfg_or_path: Any, dryrun: bool = True) -> dict:
             routing = config.routing
             relay_base = config.relay.base_url
             relay_token = config.relay.token
+            path_mappings = config.path_mappings
         except Exception:
             # Fall back to legacy dict-based loading
             cfg = _load_cfg_from_path(cfg_or_path)
@@ -121,6 +130,7 @@ def scan_once(cfg_or_path: Any, dryrun: bool = True) -> dict:
             relay_base_env = cfg.get("relay", {}).get("base_env", "RELAY_BASE")
             relay_token_env = cfg.get("relay", {}).get("token_env", "RELAY_TOKEN")
             relay_base, relay_token = relay_from_env(relay_base_env, relay_token_env)
+            path_mappings = []
     else:
         # Legacy dict-based config
         cfg = cfg_or_path or {}
@@ -131,6 +141,7 @@ def scan_once(cfg_or_path: Any, dryrun: bool = True) -> dict:
         relay_base_env = cfg.get("relay", {}).get("base_env", "RELAY_BASE")
         relay_token_env = cfg.get("relay", {}).get("token_env", "RELAY_TOKEN")
         relay_base, relay_token = relay_from_env(relay_base_env, relay_token_env)
+        path_mappings = []
 
     # Mount checks
     for m in mounts:
@@ -203,9 +214,24 @@ def scan_once(cfg_or_path: Any, dryrun: bool = True) -> dict:
         "dryrun": dryrun,
         "mount_ok": True
     }
-    # Optionally add a small preview summary
+    # Optionally add a small preview summary with path translation
     if broken:
-        summary["sample"] = [{"path": b[0], "target": b[1], "resolved": b[2], "kind": b[3], "name": b[4]} for b in broken[:20]]
+        samples = []
+        for b in broken[:20]:
+            container_path = b[0]
+            logical_path = container_to_logical(container_path, path_mappings) if path_mappings else container_path
+            sample = {
+                "path": container_path,
+                "target": b[1],
+                "resolved": b[2],
+                "kind": b[3],
+                "name": b[4]
+            }
+            # Include logical path if different from container path
+            if logical_path != container_path:
+                sample["logical_path"] = logical_path
+            samples.append(sample)
+        summary["sample"] = samples
 
     return {"ok": True, "summary": summary}
 
