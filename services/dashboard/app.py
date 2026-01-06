@@ -1,10 +1,26 @@
 from __future__ import annotations
-import os, sqlite3, math, time, re
+import os, sqlite3, math, time, re, sys
 from flask import (
     Flask, render_template, request, redirect,
     url_for, flash, jsonify, Blueprint
 )
 import requests
+
+# Import central config module
+# Dynamically add paths based on environment
+_app_base = os.environ.get('APP_BASE', '/app')
+_refresher_path = os.path.join(_app_base, 'refresher') if os.path.exists(os.path.join(_app_base, 'refresher')) else '/app/refresher'
+if _app_base not in sys.path:
+    sys.path.insert(0, _app_base)
+if _refresher_path not in sys.path:
+    sys.path.insert(0, _refresher_path)
+
+try:
+    from config import load_config, get_config, to_dict as config_to_dict, route_for_path
+    CONFIG_MODULE_AVAILABLE = True
+except ImportError:
+    CONFIG_MODULE_AVAILABLE = False
+    print("Warning: Central config module not available, using legacy config")
 
 # ---------- Config ----------
 DATA_DIR      = os.environ.get("DATA_DIR", "/data")
@@ -503,6 +519,125 @@ def api_episodes():
     conn = db()
     items = [_unify_item(x) | {"kind": "episode"} for x in build_episode_items(conn, q="")]
     return jsonify(items)
+
+@api.get("/config")
+def api_config():
+    """
+    Expose current configuration for UI discovery and debugging.
+    Returns the configuration loaded from YAML/env with sensitive data masked.
+    """
+    if CONFIG_MODULE_AVAILABLE:
+        try:
+            config = get_config()
+            return jsonify(config_to_dict(config))
+        except Exception as e:
+            return jsonify({"error": f"Failed to load config: {e}"}), 500
+    else:
+        # Fallback to basic config info
+        return jsonify({
+            "scan": {
+                "roots": [SYMLINK_ROOT] if SYMLINK_ROOT else [],
+                "interval": int(os.environ.get("SCAN_INTERVAL", "300"))
+            },
+            "relay": {
+                "base_url": RELAY_BASE,
+                "token_set": bool(RELAY_TOKEN)
+            },
+            "database": {
+                "path": DB_PATH,
+                "data_dir": DATA_DIR
+            },
+            "routing": [{"prefix": p, "type": t} for p, t in INSTANCE_BY_PREFIX],
+            "dryrun": os.environ.get("DRYRUN", "true").lower() == "true",
+            "note": "Central config module not available, showing env-based config"
+        })
+
+@api.get("/routes")
+def api_routes():
+    """
+    Expose routing/mapping configuration for UI visibility and troubleshooting.
+    Shows how paths are mapped and routed to different instances.
+    """
+    if CONFIG_MODULE_AVAILABLE:
+        try:
+            config = get_config()
+            return jsonify({
+                "routing": [
+                    {"prefix": r.prefix, "type": r.type}
+                    for r in config.routing
+                ],
+                "path_mappings": [
+                    {
+                        "container_path": m.container_path,
+                        "logical_path": m.logical_path,
+                        "description": m.description
+                    }
+                    for m in config.path_mappings
+                ],
+                "examples": [
+                    {
+                        "path": r.prefix + "/Example Show/Season 1/episode.mkv",
+                        "routes_to": r.type,
+                        "description": f"Content under {r.prefix} routes to {r.type}"
+                    }
+                    for r in config.routing[:3]  # Show first 3 as examples
+                ]
+            })
+        except Exception as e:
+            return jsonify({"error": f"Failed to load routing config: {e}"}), 500
+    else:
+        # Fallback routing info
+        return jsonify({
+            "routing": [{"prefix": p, "type": t} for p, t in INSTANCE_BY_PREFIX],
+            "path_mappings": [],
+            "examples": [
+                {
+                    "path": p + "/Example/file.mkv",
+                    "routes_to": t,
+                    "description": f"Content under {p} routes to {t}"
+                }
+                for p, t in INSTANCE_BY_PREFIX[:3]
+            ],
+            "note": "Central config module not available, showing legacy routing"
+        })
+
+@api.get("/stats")
+def api_stats():
+    """
+    Expose symlink statistics for dashboard display.
+    """
+    try:
+        conn = db()
+        cur = conn.cursor()
+        movies_linked, movies_total, mov_pct, eps_linked, eps_total, eps_pct, broken_count = query_counters(cur)
+        
+        # Get additional stats
+        cur.execute("SELECT COUNT(*) FROM symlinks")
+        total_symlinks = cur.fetchone()[0] or 0
+        
+        cur.execute("SELECT COUNT(*) FROM symlinks WHERE COALESCE(last_status, status)='ok'")
+        ok_symlinks = cur.fetchone()[0] or 0
+        
+        return jsonify({
+            "movies": {
+                "linked": movies_linked,
+                "total": movies_total,
+                "percentage": round(mov_pct, 1)
+            },
+            "episodes": {
+                "linked": eps_linked,
+                "total": eps_total,
+                "percentage": round(eps_pct, 1)
+            },
+            "symlinks": {
+                "total": total_symlinks,
+                "ok": ok_symlinks,
+                "broken": broken_count,
+                "percentage_healthy": round((ok_symlinks / total_symlinks * 100.0) if total_symlinks else 0.0, 1)
+            }
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 app.register_blueprint(api)
 

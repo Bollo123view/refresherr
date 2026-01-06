@@ -19,3 +19,6 @@ data/
 refresherr-*.zip
 *.zip.sha256
 *.bak
+
+# Test scripts
+test_api.py

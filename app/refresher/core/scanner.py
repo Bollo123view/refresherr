@@ -4,8 +4,20 @@ from typing import List, Tuple, Optional, Dict, Any
 from .mounts import is_mount_present
 from .relay_client import build_find_link, relay_from_env
 from . import store
+# Import central config module
+import sys
+# Add parent directory to path to import config module
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+# Import from refresher.config to maintain consistent module identity
+try:
+    from refresher.config import load_config, route_for_path, apply_rewrites, RefresherrConfig
+except ImportError:
+    # Fallback for different import contexts
+    from config import load_config, route_for_path, apply_rewrites, RefresherrConfig
 
-# Helpers for config/routing
+# Legacy helpers for backward compatibility (delegate to config module)
 
 def _load_cfg_from_path(cfg_path: str) -> dict:
     try:
@@ -76,32 +88,58 @@ def classify(path: str) -> tuple[str, str, Optional[int]]:
 def scan_once(cfg_or_path: Any, dryrun: bool = True) -> dict:
     """
     Scan configured roots for symlinks, record statuses in DB, and enqueue relay find actions for broken symlinks.
-    cfg_or_path: either a dict (already parsed YAML) or a path string to YAML config.
+    cfg_or_path: either a dict (already parsed YAML), a RefresherrConfig object, or a path string to YAML config.
     Returns a dict with summary.
     """
-    if isinstance(cfg_or_path, str):
-        cfg = _load_cfg_from_path(cfg_or_path)
+    # Support new config module alongside legacy dict-based config
+    if isinstance(cfg_or_path, RefresherrConfig):
+        # Use new config module
+        config = cfg_or_path
+        roots = config.scan.roots
+        mounts = config.scan.mount_checks
+        rewrites = config.scan.rewrites
+        routing = config.routing
+        relay_base = config.relay.base_url
+        relay_token = config.relay.token
+    elif isinstance(cfg_or_path, str):
+        # Try loading with new config module first
+        try:
+            config = load_config(cfg_or_path)
+            roots = config.scan.roots
+            mounts = config.scan.mount_checks
+            rewrites = config.scan.rewrites
+            routing = config.routing
+            relay_base = config.relay.base_url
+            relay_token = config.relay.token
+        except Exception:
+            # Fall back to legacy dict-based loading
+            cfg = _load_cfg_from_path(cfg_or_path)
+            roots = _load_scan_roots(cfg)
+            mounts = _load_mount_checks(cfg)
+            rewrites = [(r.get("from"), r.get("to")) for r in cfg.get("scan", {}).get("rewrites", [])]
+            routing = _load_routing(cfg)
+            relay_base_env = cfg.get("relay", {}).get("base_env", "RELAY_BASE")
+            relay_token_env = cfg.get("relay", {}).get("token_env", "RELAY_TOKEN")
+            relay_base, relay_token = relay_from_env(relay_base_env, relay_token_env)
     else:
+        # Legacy dict-based config
         cfg = cfg_or_path or {}
+        roots = _load_scan_roots(cfg)
+        mounts = _load_mount_checks(cfg)
+        rewrites = [(r.get("from"), r.get("to")) for r in cfg.get("scan", {}).get("rewrites", [])]
+        routing = _load_routing(cfg)
+        relay_base_env = cfg.get("relay", {}).get("base_env", "RELAY_BASE")
+        relay_token_env = cfg.get("relay", {}).get("token_env", "RELAY_TOKEN")
+        relay_base, relay_token = relay_from_env(relay_base_env, relay_token_env)
 
     # Mount checks
-    mounts = _load_mount_checks(cfg)
     for m in mounts:
         if not is_mount_present(m):
             summary = {"ok": False, "error": f"mount not present: {m}", "mount_ok": False}
             return {"ok": False, "summary": summary}
 
-    roots = _load_scan_roots(cfg)
-    rewrites = [(r.get("from"), r.get("to")) for r in cfg.get("scan", {}).get("rewrites", [])]
-    routing = _load_routing(cfg)
-
     broken = []
     examined = 0
-
-    # Get relay base/token from envs defined in config if present or from RELAY_BASE/RELAY_TOKEN
-    relay_base_env = cfg.get("relay", {}).get("base_env", "RELAY_BASE")
-    relay_token_env = cfg.get("relay", {}).get("token_env", "RELAY_TOKEN")
-    relay_base, relay_token = relay_from_env(relay_base_env, relay_token_env)
 
     for root in roots:
         if not root:
@@ -143,8 +181,13 @@ def scan_once(cfg_or_path: Any, dryrun: bool = True) -> dict:
                 kind, name, season = classify(str(p))
                 # Build a payload row for history (timestamp etc.)
                 broken.append((str(p), target, resolved, kind, name, season))
-                # routing decides find type
-                rtype = _route_for_path(str(p), routing) or ""
+                # routing decides find type - use new or legacy routing helper
+                if isinstance(routing, list) and routing and len(routing) > 0 and hasattr(routing[0], 'prefix'):
+                    # New config module routing
+                    rtype = route_for_path(str(p), routing) or ""
+                else:
+                    # Legacy dict-based routing
+                    rtype = _route_for_path(str(p), routing) or ""
                 if rtype and relay_base and relay_token:
                     # Build a find link via the relay and enqueue
                     url = build_find_link(relay_base, relay_token, rtype, name)
