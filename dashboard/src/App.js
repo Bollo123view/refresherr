@@ -1,6 +1,48 @@
-import React from 'react';
-import { useConfig, useRoutes, useStats, useBrokenItems } from './hooks';
+import React, { useState } from 'react';
+import { useConfig, useRoutes, useStats, useBrokenItems, useDryRun } from './hooks';
 import './App.css';
+
+/**
+ * Dry Run Toggle component
+ */
+function DryRunToggle() {
+  const { dryrun, loading, toggleDryRun } = useDryRun();
+  const [message, setMessage] = useState('');
+
+  const handleToggle = async () => {
+    const result = await toggleDryRun();
+    if (result.success) {
+      setMessage(result.message);
+      setTimeout(() => setMessage(''), 5000); // Clear message after 5 seconds
+    } else {
+      setMessage(`Error: ${result.error}`);
+    }
+  };
+
+  if (loading) return <div className="dryrun-toggle loading">Loading...</div>;
+
+  return (
+    <div className="dryrun-toggle-container">
+      <div className="dryrun-toggle">
+        <span className="toggle-label">Dry Run Mode:</span>
+        <button 
+          className={`toggle-btn ${dryrun ? 'active' : 'inactive'}`}
+          onClick={handleToggle}
+          title={dryrun ? 'Click to disable dry run (allow repairs)' : 'Click to enable dry run (safe mode)'}
+        >
+          <span className="toggle-status">
+            {dryrun ? '🟢 ON (Safe)' : '🔴 OFF (Active)'}
+          </span>
+        </button>
+      </div>
+      {message && (
+        <div className={`toggle-message ${message.includes('Error') ? 'error' : 'success'}`}>
+          {message}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /**
  * Stats card component to display metrics
@@ -191,8 +233,13 @@ function App() {
   return (
     <div className="App">
       <header className="app-header">
-        <h1>Refresherr Dashboard</h1>
-        <p>Symlink Health Monitoring & Repair</p>
+        <div className="header-content">
+          <div className="header-title">
+            <h1>Refresherr Dashboard</h1>
+            <p>Symlink Health Monitoring & Repair</p>
+          </div>
+          <DryRunToggle />
+        </div>
       </header>
 
       <main className="app-main">
