@@ -86,7 +86,7 @@ def ensure_schema(conn: sqlite3.Connection):
     conn.commit()
 
 def U(base: str, path: str) -> str:
-    return f"{base}/api/v3/{path.lstrip('/')}"
+    return f"{base}/api/v3/{path.lstrip('/') }"
 
 def get_json(method: str, url: str, key: str, **params):
     headers = {"X-Api-Key": key}
@@ -98,7 +98,7 @@ def get_json(method: str, url: str, key: str, **params):
                 time.sleep(backoff); backoff = min(backoff*2, 20)
                 continue
             r.raise_for_status()
-            if r.headers.get("content-type","").startswith("application/json"):
+            if r.headers.get("content-type","" ).startswith("application/json"):
                 return r.json()
             return None
         except Exception as e:
@@ -107,12 +107,29 @@ def get_json(method: str, url: str, key: str, **params):
             time.sleep(backoff); backoff = min(backoff*2, 20)
 
 def upsert(conn: sqlite3.Connection, table: str, keys: Dict[str, Any], update: Dict[str, Any]):
+    """
+    Upsert helper compatible with a wide range of SQLite versions.
+    If 'id' is present in keys attempt to UPDATE the row first; if no row was updated, INSERT the combined data.
+    Otherwise fall back to INSERT OR REPLACE.
+    """
     cols = list({*keys.keys(), *update.keys()})
-    placeholders = ", ".join([f":{c}" for c in cols])
-    setters = ", ".join([f"{c}=excluded.{c}" for c in update.keys()])
-    sql = f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({placeholders}) ON CONFLICT DO UPDATE SET {setters};"
     data = {**keys, **update}
-    conn.execute(sql, data)
+
+    if "id" in keys:
+        # Try to do a plain UPDATE first (avoids relying on newer SQLite 'excluded' syntax)
+        setters = ", ".join([f"{c}=:{c}" for c in update.keys()])
+        update_sql = f"UPDATE {table} SET {setters} WHERE id=:id;"
+        cur = conn.execute(update_sql, data)
+        # If no rows updated, do an INSERT
+        if cur.rowcount == 0:
+            placeholders = ", ".join([f":{c}" for c in cols])
+            insert_sql = f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({placeholders});"
+            conn.execute(insert_sql, data)
+    else:
+        # Fallback: replace whole row when no id key provided
+        placeholders = ", ".join([f":{c}" for c in cols])
+        sql = f"INSERT OR REPLACE INTO {table} ({', '.join(cols)}) VALUES ({placeholders});"
+        conn.execute(sql, data)
 
 def lookup_symlink(conn: sqlite3.Connection, original_path: str) -> Optional[str]:
     try:
