@@ -1,42 +1,13 @@
+"""Process actions tool - uses central DB module."""
 from __future__ import annotations
 import os, time, sqlite3, requests
+from app.refresher.core import db
 
 DB_PATH = os.environ.get("DB_PATH", "/data/symlinks.db")
 
-def ensure_actions_schema(conn: sqlite3.Connection) -> None:
-    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    if "actions" not in tables:
-        conn.execute("""
-            CREATE TABLE actions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                created_utc INTEGER,
-                url TEXT,
-                reason TEXT,
-                related_path TEXT,
-                status TEXT DEFAULT 'pending',
-                last_error TEXT
-            )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_actions_status ON actions(status)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_actions_related_path ON actions(related_path)")
-        conn.commit()
-        return
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(actions)")}
-    for col, ddl in [
-        ("created_utc","created_utc INTEGER"),
-        ("url","url TEXT"),
-        ("reason","reason TEXT"),
-        ("related_path","related_path TEXT"),
-        ("status","status TEXT DEFAULT 'pending'"),
-        ("last_error","last_error TEXT"),
-    ]:
-        if col not in cols:
-            conn.execute(f"ALTER TABLE actions ADD COLUMN {ddl}")
-    conn.commit()
-
 def main() -> None:
-    conn = sqlite3.connect(DB_PATH)
-    ensure_actions_schema(conn)
+    conn = db.get_connection(DB_PATH)
+    db.initialize_schema(conn)
 
     max_send = int(os.environ.get("ACTIONS_MAX", "25"))
     timeout = float(os.environ.get("ACTIONS_TIMEOUT", "15"))
