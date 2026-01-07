@@ -1,110 +1,70 @@
-# docker-compose.yml
-# 
-# Current Architecture:
-# - refresher: Background scanner service
-# - dashboard: Flask web UI and API
-# - research-relay: Search/repair relay service
-#
-# Future Unified Architecture (planned):
-# - unified-backend: Combined FastAPI/Flask service with:
-#   * Background scanner (async)
-#   * API endpoints (/api/*)
-#   * Static React dashboard (served from /static)
-#   * Metrics and monitoring
-# - research-relay: Search/repair relay service (unchanged)
-#
-# To prepare for unified deployment:
-# 1. Build React dashboard: cd dashboard && npm run build
-# 2. Copy build/ to services/dashboard/static/
-# 3. Update dashboard service to serve static files from /static route
-# 4. Merge refresher and dashboard containers (future enhancement)
+version: '3.8'
+
+# Refresherr - Single Container Architecture
+# All-in-one container with scanner, dashboard API, React UI, and relay logic
 
 services:
-  refresher:
-    # Background scanner service - monitors symlinks and enqueues repairs
-    # Uses centralized config from /config/config.yaml with environment overrides
+  refresherr:
     build:
-      context: ./app
-    container_name: refresher
+      context: .
+      dockerfile: Dockerfile
+    container_name: refresherr
     env_file:
-      - ./.env
+      - .env
     environment:
-      # Legacy env vars (prefer config.yaml for new deployments)
-      - SYMLINK_ROOT=/opt/media/jelly
-      - MOUNT_ROOT=/mnt/remote/realdebrid
-      - REFRESHER_LOG_LEVEL=INFO
-      - IGNORE_SUBSTR=cinesync
-      # Config file location (defaults to /config/config.yaml)
-      # - CONFIG_FILE=/config/config.yaml
-    volumes:
-      - ./config:/config:ro          # Configuration files
-      - ./data:/data                 # Database and logs
-      - /opt/media:/opt/media:rw     # Symlink root (read-write for repairs)
-      # Actual file storage (read-only) - adjust for your setup
-      - /opt/media/remote/realdebrid:/mnt/remote/realdebrid:ro
-    command: ["python", "-c", "from refresher.core.scanner import run_loop; run_loop()"]
-    restart: unless-stopped
-    healthcheck:
-      # dry, non-destructive scan; unhealthy only if mount missing
-      test: ["CMD", "python", "-m", "refresher.core.scanner", "--json"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-    depends_on:
-      research-relay:
-        condition: service_healthy
-
-  research-relay:
-    build:
-      context: ./services/research-relay
-    container_name: research-relay
-    env_file:
-      - ./.env
-    working_dir: /app
-    # Run the Flask app even if app.py doesn't include app.run()
-    command: ["python", "-c", "from app import app; app.run(host='0.0.0.0', port=5050)"]
-    ports:
-      - "5050:5050"
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:5050/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-
-  dashboard:
-    # Flask backend serving API and prepared for static React assets
-    # Current: API-only service
-    # Future: Will serve built React dashboard from /static route
-    image: python:3.11-slim
-    container_name: refresher-dashboard
-    env_file:
-      - ./.env
-    environment:
+      # Core settings (override via .env)
+      - CONFIG_FILE=/config/config.yaml
       - DATA_DIR=/data
-      - RELAY_BASE=${RELAY_BASE}
-      - RELAY_TOKEN=${RELAY_TOKEN}
-      - FLASK_SECRET=${FLASK_SECRET:-change-me}
+      - DRYRUN=${DRYRUN:-true}
+      - SCAN_INTERVAL=${SCAN_INTERVAL:-300}
+      
+      # Internal relay (runs on localhost for single-container mode)
+      - RELAY_BASE=${RELAY_BASE:-http://localhost:5050}
+      - RELAY_TOKEN=${RELAY_TOKEN:-internal}
+      
+      # Dashboard settings
+      - FLASK_SECRET=${FLASK_SECRET:-change-me-to-random-string}
       - PORT=8088
-    working_dir: /app
+      
+      # Optional: Discord notifications (webhook URL)
+      # Get webhook from Discord: Server Settings > Integrations > Webhooks
+      # Format: https://discord.com/api/webhooks/ID/TOKEN
+      - DISCORD_WEBHOOK=${DISCORD_WEBHOOK:-}
+    
     volumes:
-      # app code (read-only) + DB (read-write for query access)
-      - ./services/dashboard:/app:ro
-      - ./data:/data:rw
-      # Future: Mount built React assets
-      # - ./dashboard/build:/app/static:ro
-      - /opt/refresherr/services/dashboard/templates:/app/templates
+      # Configuration (read-only)
+      - ./config:/config:ro
+      
+      # Data directory (read-write for database and logs)
+      - ./data:/data
+      
+      # Media symlink root (read-write for repairs)
+      # IMPORTANT: Adjust these paths to match your host system
+      - /opt/media:/opt/media:rw
+      
+      # Actual file storage (read-only)
+      # IMPORTANT: Adjust this path to your RealDebrid mount
+      - /mnt/realdebrid:/mnt/remote/realdebrid:ro
+    
     ports:
-      - "8088:8088"
-    # install deps then run; keeps things simple without a custom Dockerfile
-    command: ["sh", "-lc", "pip install --no-cache-dir -r requirements.txt && python app.py"]
+      - "${PORT:-8088}:8088"
+    
     restart: unless-stopped
+    
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8088/health"]
       interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    
+    # Optional: Security hardening
+    # security_opt:
+    #   - no-new-privileges:true
+    # cap_drop:
+    #   - ALL
+    # cap_add:
+    #   - CHOWN
+    #   - DAC_OVERRIDE
 
+# No networks needed - everything runs in single container

@@ -1,115 +1,86 @@
 # Refresherr
 
-Future-proof repair/refresh layer for RD/rclone media symlinks.
+**Future-proof repair and refresh layer for Real-Debrid/rclone media symlinks.**
+
+Refresherr is a self-contained container that monitors your media symlinks, detects broken links, and automatically repairs them through Cinesync or Sonarr/Radarr integration. Everything runs in a single container with a built-in web dashboard.
 
 ## Features
 
-- **Always-on auto-scan** - Background scanner monitors symlinks continuously, updating dashboard status
-- **Auto-repair orchestrator** - Configurable auto-repair (OFF by default) that coordinates repair attempts: cinesync → arr → manual
-- **Manual repair buttons** - Dashboard controls for on-demand Cinesync and ARR repairs with live stats
-- **Post-repair auto-scan** - Automatic scan after each repair to ensure accurate status
-- **Mount-aware scanner** with dry-run mode enabled by default
-- **Dry-run manifest** - preview all actions before applying changes
-- **Discord notifications** + one-click "Find" via relay
-- **SQLite history** - track all symlink status changes and repair runs
-- **Dockerized** - no cron needed, built-in scheduling
-- **Central configuration** with path routing and container↔host mapping
-- **Web Dashboard** - React-based UI with real-time stats, toggles, and repair controls
+- 🔍 **Continuous Auto-Scan** - Background monitoring of symlinks with real-time dashboard updates
+- 🔧 **Auto-Repair Orchestrator** - Configurable automatic repairs: Cinesync → ARR → manual (disabled by default)
+- 🎛️ **Manual Repair Controls** - On-demand Cinesync and ARR repairs via dashboard or API
+- 🌐 **Web Dashboard** - React-based UI with real-time stats, toggles, and repair history
+- 🔒 **Dry-Run Mode** - Safe preview mode enabled by default (no changes until you're ready)
+- 📊 **SQLite History** - Complete tracking of symlink status changes and repairs
+- 🐳 **Single Container** - Everything included: scanner + API + UI + relay logic
+- ⚙️ **Simple Configuration** - Just YAML + environment variables
+- 🔔 **Discord Notifications** - Optional webhook notifications for repairs
 
-## Table of Contents
-
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Auto-Scan & Repair](#auto-scan--repair)
-- [Dry Run Mode](#dry-run-mode)
-- [Configuration](#configuration)
-- [Dashboard](#dashboard)
-- [Database Schema](#database-schema)
-- [Manual Tools](#manual-tools)
-- [API Endpoints](#api-endpoints)
-- [Troubleshooting](#troubleshooting)
-
-## Installation
+## Quick Start
 
 ### Prerequisites
 
-- Docker and Docker Compose installed
+- Docker (or Podman)
 - Media files accessible via symlinks
-- Sonarr/Radarr instances configured
-- (Optional) Discord webhook for notifications
+- Sonarr/Radarr instances (optional, for auto-repair)
 
-### Step 1: Clone the Repository
+### 1. Get Refresherr
 
 ```bash
 git clone https://github.com/Bollo123view/refresherr.git
 cd refresherr
 ```
 
-### Step 2: Create Configuration Files
+### 2. Configure
 
-Copy the sample configuration files:
+Copy the sample configuration:
 
 ```bash
 cp config/env.sample .env
 cp config/config.sample.yaml config/config.yaml
 ```
 
-### Step 3: Configure Environment Variables
-
-Edit `.env` to match your environment. Key settings:
+Edit `.env` with your settings:
 
 ```bash
-# Dry run mode - set to 'false' to enable actual repairs (default: true)
-DRYRUN=true
+# Essential settings
+DRYRUN=true                                    # Safe mode - set to false when ready
+SCAN_INTERVAL=300                              # Scan every 5 minutes
 
-# Data directory for database and logs
+# Relay settings (for ARR repairs)
+RELAY_BASE=http://localhost:5050               # Internal relay (no token needed for single container)
+RELAY_TOKEN=your-secret-token-here             # Only needed if exposing relay externally
+
+# Data directory
 DATA_DIR=/data
 
-# Relay service configuration
-RELAY_BASE=http://research-relay:5050
-RELAY_TOKEN=your-secret-token-here
-
-# Scan interval in seconds (default: 300 = 5 minutes)
-SCAN_INTERVAL=300
-
-# Discord webhook for notifications (optional)
+# Optional: Discord notifications
 DISCORD_WEBHOOK=https://discord.com/api/webhooks/...
-
-# Flask secret for dashboard session management
-FLASK_SECRET=change-me-to-random-string
 ```
 
-See `config/env.sample` for a complete list with descriptions.
-
-### Step 4: Configure Scan Roots and Routing
-
-Edit `config/config.yaml` to define your scan roots, routing rules, and path mappings:
+Edit `config/config.yaml` with your paths:
 
 ```yaml
 scan:
-  # Directories to scan for symlinks
+  # Your media directories
   roots:
     - /opt/media/jelly/tv
     - /opt/media/jelly/movies
-    - /opt/media/jelly/4k
   
   # Verify these mounts exist before scanning
   mount_checks:
     - /mnt/remote/realdebrid
   
-  # Scan interval in seconds
   interval: 300
 
-# Route paths to Sonarr/Radarr instances (matched longest-prefix-first)
+# Route paths to Sonarr/Radarr instances
 routing:
-  - prefix: /opt/media/jelly/4k
-    type: radarr_4k
   - prefix: /opt/media/jelly/movies
     type: radarr_movie
   - prefix: /opt/media/jelly/tv
     type: sonarr_tv
 
-# Container↔host path mappings for proper path translation
+# Container ↔ host path mappings (for logs/troubleshooting)
 path_mappings:
   - container: /opt/media/jelly
     logical: /mnt/storage/media/jelly
@@ -120,130 +91,166 @@ path_mappings:
     description: "RealDebrid mount"
 ```
 
-See `config/config.sample.yaml` for a complete example with all options.
+### 3. Run
 
-### Step 5: Configure Docker Volumes
-
-Update `docker-compose.yml` volumes to match your host paths:
-
-```yaml
-services:
-  refresher:
-    volumes:
-      - ./config:/config:ro          # Config files (read-only)
-      - ./data:/data                 # Database and logs (read-write)
-      - /opt/media:/opt/media:rw     # Your symlink root (read-write for repairs)
-      - /mnt/realdebrid:/mnt/remote/realdebrid:ro  # Actual files (read-only)
-```
-
-⚠️ **Important**: Ensure the paths on the left side of the `:` match your host filesystem.
-
-### Step 6: Start the Services
+Using Docker Compose:
 
 ```bash
 docker-compose up -d
 ```
 
-### Step 7: Verify Installation
-
-Check that all services are running:
+Or using Docker directly:
 
 ```bash
-docker-compose ps
+docker build -t refresherr .
+docker run -d \
+  --name refresherr \
+  --env-file .env \
+  -v ./config:/config:ro \
+  -v ./data:/data \
+  -v /opt/media:/opt/media:rw \
+  -v /mnt/realdebrid:/mnt/remote/realdebrid:ro \
+  -p 8088:8088 \
+  refresherr
 ```
 
-You should see three services running:
-- `refresher` - Background scanner
-- `dashboard` - Web UI and API
-- `research-relay` - Search/repair relay
+### 4. Access Dashboard
 
-Access the dashboard at: `http://localhost:8088`
+Open http://localhost:8088 in your browser to:
+- View symlink health statistics
+- Check configuration and routing
+- Monitor broken symlinks
+- Trigger manual repairs
+- Enable/disable auto-repair
 
-Check the logs to verify scanning is working:
+## Configuration
+
+### Environment Variables (`.env`)
+
+Core settings that control Refresherr's behavior:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CONFIG_FILE` | `/config/config.yaml` | Path to YAML config |
+| `DRYRUN` | `true` | Enable dry-run mode (no changes made) |
+| `SCAN_INTERVAL` | `300` | Seconds between scans |
+| `DATA_DIR` | `/data` | Database and logs directory |
+| `RELAY_BASE` | - | Relay service URL (internal for single container) |
+| `RELAY_TOKEN` | - | Auth token (only if exposing relay externally) |
+| `DISCORD_WEBHOOK` | - | Optional Discord webhook URL |
+| `FLASK_SECRET` | - | Session secret for dashboard |
+| `PORT` | `8088` | Dashboard web port |
+
+### YAML Configuration (`config/config.yaml`)
+
+Defines scan roots, routing, and path mappings:
+
+```yaml
+scan:
+  roots:                    # Directories to scan for symlinks
+    - /opt/media/jelly/tv
+    - /opt/media/jelly/movies
+  
+  mount_checks:             # Verify these mounts exist
+    - /mnt/remote/realdebrid
+  
+  interval: 300             # Scan frequency in seconds
+
+routing:                    # Route paths to instances (longest-prefix-first)
+  - prefix: /opt/media/jelly/4k
+    type: radarr_4k
+  - prefix: /opt/media/jelly/movies
+    type: radarr_movie
+  - prefix: /opt/media/jelly/tv
+    type: sonarr_tv
+
+path_mappings:              # Container ↔ host translation
+  - container: /opt/media/jelly
+    logical: /mnt/storage/media/jelly
+    description: "Jellyfin symlink root"
+```
+
+See `config/config.sample.yaml` for a complete example with all options.
+
+### Volume Mounts
+
+When running in Docker, configure volumes to match your system:
+
+```yaml
+volumes:
+  - ./config:/config:ro                          # Config files (read-only)
+  - ./data:/data                                 # Database and logs (read-write)
+  - /opt/media/jelly:/opt/media/jelly:rw         # Symlink root (read-write for repairs)
+  - /mnt/realdebrid:/mnt/remote/realdebrid:ro    # Actual files (read-only)
+```
+
+⚠️ **Important**: The left side is the **host path**, the right side is the **container path**.
+
+### Sonarr/Radarr Configuration
+
+For ARR repair functionality, configure your instances in `.env`:
 
 ```bash
-docker-compose logs -f refresher
-```
-
-You should see scan summaries like:
-```
-[refresher] scan: broken=0 examined=123 dryrun=True
-```
-
-### Step 8: Configure Sonarr/Radarr Instances (Optional)
-
-For metadata ingestion, set environment variables for your Sonarr/Radarr instances in `.env`:
-
-```bash
+# Sonarr instances
 SONARR_TV_URL=http://sonarr-tv:8989
 SONARR_TV_API=your-api-key-here
+
+# Radarr instances
+RADARR_MOVIE_URL=http://radarr:7878
+RADARR_MOVIE_API=your-api-key-here
 
 RADARR_4K_URL=http://radarr-4k:7878
 RADARR_4K_API=your-api-key-here
 ```
 
-Run metadata ingest:
+## Usage
 
-```bash
-docker-compose exec refresher python -m refresher.ingest
-```
+### Dry Run Mode (Default)
 
-## Quick Start
+Refresherr starts in **dry-run mode** by default, which means:
+- ✅ Scans symlinks and updates database
+- ✅ Generates manifest showing what would be changed
+- ❌ NO symlinks are modified
+- ❌ NO repair actions are executed
 
-After installation, here's how to use Refresherr:
+**To disable dry-run and enable repairs:**
 
-1. **Start services**: `docker-compose up -d`
+1. Set `DRYRUN=false` in `.env` and restart
+2. OR toggle it in the dashboard header
+3. OR use the API: `curl -X POST http://localhost:8088/api/config/dryrun -H "Content-Type: application/json" -d '{"dryrun": false}'`
 
-2. **Access dashboard**: Open `http://localhost:8088` in your browser
+### Auto-Scan
 
-3. **Review broken symlinks**: Click "Broken" in the navigation to see broken symlinks
+The scanner runs continuously in the background at the configured interval (default: 5 minutes).
 
-4. **Test in dry-run mode**: The system runs in dry-run mode by default - no changes are made
-
-5. **Review the dry-run manifest**: Check the logs or dashboard to see what would be changed
-
-6. **Disable dry-run**: When ready, set `DRYRUN=false` in `.env` or toggle in the dashboard
-
-7. **Monitor repairs**: Watch the dashboard for repair status and statistics
-
-## Auto-Scan & Repair
-
-Refresherr provides comprehensive automatic scanning and repair capabilities with fine-grained control.
-
-### Always-On Auto-Scan
-
-The scanner runs continuously in the background, monitoring your symlinks at the configured interval (default: 5 minutes).
-
-**What the scanner does:**
-- ✅ Scans all configured roots for symlinks
-- ✅ Checks each symlink's target and status (broken/healthy)
-- ✅ Updates the database with current status
-- ✅ Updates dashboard statistics in real-time
-- ✅ Runs at startup and periodically (no user toggle required)
+**What it does:**
+- Monitors all configured scan roots
+- Checks symlink targets and status
+- Updates database with current state
+- Displays statistics in dashboard
 
 **Configuration:**
 ```bash
-# In .env or environment
-SCAN_INTERVAL=300  # Seconds between scans (default: 300 = 5 minutes)
+SCAN_INTERVAL=300  # Seconds between scans (5 minutes)
 ```
 
-The scanner is always active and provides real-time visibility into your symlink health. No user action is required to enable scanning—it starts automatically when the `refresher` container launches.
+No user action needed - scanning starts automatically when the container launches.
 
 ### Auto-Repair Orchestrator
 
-The auto-repair orchestrator is **disabled by default** and must be explicitly enabled via the dashboard or API.
+The auto-repair orchestrator is **disabled by default** and must be explicitly enabled.
 
-**When enabled, the orchestrator:**
-1. 🎬 **Cinesync Repair** - Attempts to hotswap broken symlinks from your CineSync library
-2. 📡 **ARR Repair** - Triggers Sonarr/Radarr searches for any remaining broken items
-3. 🔄 **Post-Repair Scan** - Automatically runs a scan to update status after repairs
+**When enabled, it automatically:**
+1. 🎬 Attempts Cinesync repair (hotswap from library)
+2. 📡 Triggers ARR searches (Sonarr/Radarr)
+3. 🔄 Runs post-repair scan to update status
 
-**Enabling the orchestrator:**
+**To enable:**
 
 Via Dashboard:
-1. Navigate to `http://localhost:8088`
-2. Find the "Auto-Repair Orchestrator" section
-3. Click the toggle to enable (it will show "🟢 ENABLED")
+1. Navigate to http://localhost:8088
+2. Find "Auto-Repair Orchestrator" section
+3. Click toggle to enable
 
 Via API:
 ```bash
@@ -252,398 +259,281 @@ curl -X POST http://localhost:8088/api/orchestrator/toggle \
   -d '{"enabled": true}'
 ```
 
-**Important:** The orchestrator toggle state is stored in the database and persists across restarts.
+The orchestrator state persists across container restarts.
 
-### Manual Repair Buttons
+### Manual Repairs
 
-The dashboard provides two manual repair buttons that work independently of the orchestrator:
+Use the dashboard buttons or API to trigger repairs on-demand:
 
-#### 🎬 Run Cinesync Repair Now
-- Manually triggers a Cinesync repair run
-- Attempts to match broken symlinks with files in your CineSync library
-- Shows live stats: found, repaired, skipped, failed
-- Results appear immediately in the repair history
+**🎬 Cinesync Repair:**
+- Dashboard: Click "Run Cinesync Repair Now"
+- API: `curl -X POST http://localhost:8088/api/repair/cinesync`
 
-Configuration required:
+**📡 ARR Repair:**
+- Dashboard: Click "Run ARR Repair Now"
+- API: `curl -X POST http://localhost:8088/api/repair/arr`
+
+Both work independently of the orchestrator toggle.
+
+## API Reference
+
+### Configuration Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/config` | GET | Current configuration (sensitive data masked) |
+| `/api/routes` | GET | Routing and path mappings with examples |
+| `/api/config/dryrun` | POST | Toggle dry-run mode |
+
+### Status Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/stats` | GET | Symlink health statistics |
+| `/api/broken` | GET | List of broken symlinks |
+| `/api/manifest` | GET | Dry-run manifest (preview of changes) |
+| `/health` | GET | Service health check |
+
+### Repair Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/repair/cinesync` | POST | Trigger Cinesync repair |
+| `/api/repair/arr` | POST | Trigger ARR repair |
+| `/api/repair/status` | GET | Current repair run status |
+| `/api/repair/history` | GET | Repair history (supports `?limit=N&offset=N`) |
+
+### Orchestrator Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/orchestrator/toggle` | POST | Enable/disable auto-repair |
+| `/api/orchestrator/status` | GET | Orchestrator state and last run |
+
+### Examples
+
+**Check symlink health:**
+```bash
+curl http://localhost:8088/api/stats | jq
+```
+
+**View broken symlinks:**
+```bash
+curl http://localhost:8088/api/broken | jq
+```
+
+**Preview what would change (dry-run manifest):**
+```bash
+curl http://localhost:8088/api/manifest | jq
+```
+
+**Trigger manual repair:**
+```bash
+# Cinesync
+curl -X POST http://localhost:8088/api/repair/cinesync
+
+# ARR
+curl -X POST http://localhost:8088/api/repair/arr
+```
+
+**Enable auto-repair:**
+```bash
+curl -X POST http://localhost:8088/api/orchestrator/toggle \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": true}'
+```
+
+## Database
+
+Refresherr uses SQLite to track symlink status and repair history.
+
+**Location:** `/data/symlinks.db` (configurable via `DATA_DIR`)
+
+**Key tables:**
+- `symlinks` - All scanned symlinks with status
+- `repair_runs` - History of repair executions
+- `repair_stats` - Per-item repair results
+- `orchestrator_state` - Auto-repair configuration
+- `actions` - Queued repair actions
+- `movies` / `series` - Media metadata (if ingested)
+
+**View statistics:**
+```bash
+docker exec refresherr python -m refresher.tools.db_stats
+```
+
+## Troubleshooting
+
+### Container Won't Start
+
+Check logs:
+```bash
+docker logs refresherr
+```
+
+Common issues:
+- Missing or invalid configuration files
+- Invalid YAML syntax in `config.yaml`
+- Missing volume mounts
+
+### Scans Not Running
+
+1. Check environment: `docker exec refresherr env | grep SCAN_INTERVAL`
+2. Verify mount checks: `docker exec refresherr ls -la /mnt/remote/realdebrid`
+3. Review logs: `docker logs -f refresherr`
+
+### Repairs Not Working
+
+1. Ensure dry-run is disabled: `curl http://localhost:8088/api/config | jq '.dryrun'`
+2. Check orchestrator state: `curl http://localhost:8088/api/orchestrator/status`
+3. Verify ARR configuration if using ARR repairs
+4. Check repair history: `curl http://localhost:8088/api/repair/history`
+
+### Path Routing Issues
+
+1. Check routing config: `curl http://localhost:8088/api/routes`
+2. Verify path prefixes match your directory structure
+3. Remember: routes are matched longest-prefix-first
+4. Test with example paths in the API response
+
+### Configuration Not Loading
+
+1. Verify `CONFIG_FILE` points to correct location
+2. Validate YAML: `python -c "import yaml; yaml.safe_load(open('config/config.yaml'))"`
+3. Check file permissions and volume mounts
+4. Review container logs for errors
+
+## Security & Isolation
+
+### Container Security
+
+Refresherr runs as a single, self-contained container with:
+- No privileged access required
+- Read-only mounts for configuration and source files
+- Read-write only for data directory and repair targets
+- Optional read-only mounts for actual media files
+
+**Recommended Docker security:**
+```yaml
+security_opt:
+  - no-new-privileges:true
+read_only: false  # Required for database writes
+cap_drop:
+  - ALL
+cap_add:
+  - CHOWN
+  - DAC_OVERRIDE  # For symlink operations
+```
+
+### Secrets Management
+
+**Do NOT commit secrets to version control:**
+- Store sensitive data in `.env` file (add to `.gitignore`)
+- Use Docker secrets or environment variables for tokens
+- Keep `RELAY_TOKEN` secure if exposing relay externally
+- Protect Discord webhook URLs
+
+### Network Isolation
+
+The single-container architecture eliminates internal network communication:
+- No internal HTTP calls between services
+- No authentication tokens needed for internal operations
+- Relay logic runs directly within the same process
+
+**If exposing the relay endpoint externally:**
+- Set a strong `RELAY_TOKEN`
+- Use reverse proxy with TLS (nginx, Traefik, Caddy)
+- Restrict access by IP if possible
+
+## Advanced Topics
+
+### Custom Scan Roots
+
+Define multiple scan roots in `config.yaml`:
+
+```yaml
+scan:
+  roots:
+    - /opt/media/jelly/tv
+    - /opt/media/jelly/movies
+    - /opt/media/jelly/anime
+    - /opt/media/plex/4k
+```
+
+Each root is scanned independently. Use routing to direct repairs appropriately.
+
+### Path Rewrites
+
+Rewrite symlink targets during scanning:
+
+```yaml
+scan:
+  rewrites:
+    - from: /mnt/old/path
+      to: /mnt/new/path
+    - from: /mnt/remote/realdebrid
+      to: /mnt/cloud/rd
+```
+
+Useful for:
+- Migrating storage locations
+- Normalizing paths across systems
+- Handling multiple mount points
+
+### Multiple ARR Instances
+
+Configure multiple Sonarr/Radarr instances:
+
+```bash
+# In .env
+SONARR_TV_URL=http://sonarr-tv:8989
+SONARR_TV_API=key1
+
+SONARR_ANIME_URL=http://sonarr-anime:8989
+SONARR_ANIME_API=key2
+
+RADARR_MOVIE_URL=http://radarr:7878
+RADARR_MOVIE_API=key3
+
+RADARR_4K_URL=http://radarr-4k:7878
+RADARR_4K_API=key4
+```
+
+Then route paths appropriately in `config.yaml`.
+
+### Metadata Ingestion
+
+Import metadata from Sonarr/Radarr:
+
+```bash
+docker exec refresherr python -m refresher.ingest
+```
+
+This populates the database with movie/series information for enhanced dashboard features.
+
+### CineSync Repair
+
+Configure CineSync repair:
+
 ```bash
 # In .env
 CINESYNC_BASE=/opt/media/jelly/cinesync/CineSync
-CINESYNC_REPAIR_ROOTS=/opt/media/jelly/tv,/opt/media/jelly/hayu
+CINESYNC_REPAIR_ROOTS=/opt/media/jelly/tv,/opt/media/jelly/movies
 ```
 
-#### 📡 Run ARR Repair Now
-- Manually triggers ARR (Sonarr/Radarr) repair run
-- Queues search actions and processes them via the relay service
-- Shows live stats during execution
-- Updates dashboard upon completion
+CineSync repair hotswaps broken symlinks with files from your CineSync library.
 
-Configuration required:
-```bash
-# In .env
-RELAY_BASE=http://research-relay:5050
-RELAY_TOKEN=your-token-here
-ROUTE_MAP=/opt/media/jelly/tv=sonarr_tv,/opt/media/jelly/movies=radarr_movie
-```
+## Building from Source
 
-### Post-Repair Auto-Scan
-
-After **every** repair run (whether manual or automatic), Refresherr automatically triggers a scan to ensure:
-- Database is up-to-date with current symlink status
-- Dashboard shows accurate broken/healthy counts
-- Repair effectiveness is immediately visible
-
-This happens automatically—no configuration needed.
-
-### Repair History & Statistics
-
-All repair runs are tracked in the database and visible in the dashboard:
-
-- **Repair History Table** - Shows recent runs with:
-  - Date/Time of execution
-  - Repair source (cinesync, arr)
-  - Trigger type (manual, auto)
-  - Status (running, completed, failed)
-  - Statistics (found, repaired, skipped, failed)
-
-- **Live Repair Status** - When a repair is running:
-  - Shows current repair source
-  - Displays live statistics
-  - Updates automatically during execution
-
-Access via dashboard at `http://localhost:8088` or via API:
-```bash
-# Get repair history
-curl http://localhost:8088/api/repair/history
-
-# Check if a repair is currently running
-curl http://localhost:8088/api/repair/status
-```
-
-## Dry Run Mode
-
-Refresherr includes a comprehensive dry-run mode that is **enabled by default** to ensure safe operation.
-
-### What is Dry Run Mode?
-
-When dry-run mode is enabled:
-- ✅ Symlinks are scanned and status recorded in the database
-- ✅ Broken symlinks are identified and logged
-- ✅ A **manifest** is generated showing what actions would be taken
-- ❌ NO symlinks are modified or removed
-- ❌ NO files are moved or deleted
-- ❌ NO repair actions are automatically executed
-
-### Dry Run Manifest
-
-The dry run manifest provides a detailed preview of all actions that would be performed:
-
-**Manifest includes**:
-- List of broken symlinks detected
-- Target paths for each broken symlink
-- Routing information (which Sonarr/Radarr instance would handle the repair)
-- Relay URLs that would be called for repair
-- Estimated scope of changes
-
-**Viewing the manifest**:
-
-1. **Via Logs**: 
-   ```bash
-   docker-compose logs refresher | grep "dry_run=True"
-   ```
-
-2. **Via API**:
-   ```bash
-   curl http://localhost:8088/api/broken | jq
-   ```
-
-3. **Via Dashboard**: Navigate to the "Broken" page to see all items
-
-**Example manifest output**:
-```json
-{
-  "summary": {
-    "dryrun": true,
-    "broken_count": 5,
-    "examined": 1234,
-    "sample": [
-      {
-        "path": "/opt/media/jelly/tv/Show Name/Season 1/episode.mkv",
-        "target": "/mnt/remote/realdebrid/torrents/123/episode.mkv",
-        "kind": "tv",
-        "name": "Show Name",
-        "action": "would_enqueue_repair",
-        "relay_url": "http://relay:5050/find?type=sonarr_tv&term=Show%20Name"
-      }
-    ]
-  }
-}
-```
-
-### Enabling/Disabling Dry Run
-
-**Method 1: Environment Variable**
-
-Edit `.env`:
-```bash
-DRYRUN=true   # Enable dry-run (default)
-DRYRUN=false  # Disable dry-run (allow repairs)
-```
-
-Then restart:
-```bash
-docker-compose restart refresher
-```
-
-**Method 2: Dashboard Toggle** (see [Dashboard](#dashboard) section)
-
-Click the "Dry Run Mode" toggle in the dashboard header to enable/disable on-the-fly.
-
-**Method 3: Configuration File**
-
-Environment variables override YAML settings, so use `.env` for most cases.
-
-### Best Practices
-
-1. **Always start with dry-run enabled** (default)
-2. **Review the manifest** before disabling dry-run
-3. **Test with a small scan root** first
-4. **Monitor logs** when dry-run is disabled
-5. **Re-enable dry-run** if unexpected behavior occurs
-
-## Configuration
-
-Refresherr uses a centralized configuration system that supports both YAML files and environment variables.
-
-### Configuration File (`config/config.yaml`)
-
-The YAML configuration file defines:
-- **Scan roots**: Directories to monitor for symlinks
-- **Routing**: Map path prefixes to Sonarr/Radarr instances
-- **Path mappings**: Container↔host path translation for proper containerized operation
-- **Relay settings**: Research relay service configuration
-- **Database settings**: SQLite database location
-- **Notification settings**: Discord webhooks and notification preferences
-
-See `config/config.yaml` for a complete example with comments.
-
-### Environment Variables (`.env`)
-
-Environment variables override YAML settings and provide sensitive data like tokens. Key variables:
-
-- `CONFIG_FILE`: Path to YAML config (default: `/config/config.yaml`)
-- `DRYRUN`: Enable/disable dry-run mode (`true`/`false`)
-- `SCAN_INTERVAL`: Seconds between scans (default: `300`)
-- `RELAY_BASE`: Relay service URL
-- `RELAY_TOKEN`: Authentication token for relay
-- `DATA_DIR`: Database and logs directory (default: `/data`)
-- `DISCORD_WEBHOOK`: Discord notification webhook URL
-
-See `config/env.sample` for a complete list with descriptions.
-
-### Path Routing
-
-Refresherr routes symlinks to the correct Sonarr/Radarr instance based on path prefixes. Routes are matched longest-prefix-first:
-
-```yaml
-routing:
-  - prefix: /opt/media/jelly/hayu
-    type: sonarr_hayu
-  - prefix: /opt/media/jelly/tv
-    type: sonarr_tv
-  - prefix: /opt/media/jelly/4k
-    type: radarr_4k
-```
-
-**Example**: A broken symlink at `/opt/media/jelly/hayu/Show/Season 1/episode.mkv` will route to `sonarr_hayu` for automatic repair.
-
-### Path Mappings (Container ↔ Host)
-
-When running in containers, paths inside the container may differ from paths on the host. Path mappings enable proper translation:
-
-```yaml
-path_mappings:
-  - container: /opt/media/jelly
-    logical: /mnt/storage/media/jelly
-    description: "Jellyfin symlink root"
-  
-  - container: /mnt/remote/realdebrid
-    logical: /mnt/cloud/realdebrid-mount
-    description: "RealDebrid rclone mount"
-```
-
-This ensures logs, debugging output, and API responses can reference both container and host paths for easier troubleshooting.
-
-### Recommended Volume Mounts
-
-When running Refresherr in Docker, configure volumes in `docker-compose.yml`:
-
-```yaml
-volumes:
-  # Config files (read-only)
-  - ./config:/config:ro
-  
-  # Data directory (read-write for database)
-  - ./data:/data
-  
-  # Media symlink root (read-write for repairs)
-  - /opt/media:/opt/media:rw
-  
-  # Actual file mount (read-only)
-  - /mnt/realdebrid:/mnt/remote/realdebrid:ro
-```
-
-The left side of each volume mount is the **host path**, and the right side is the **container path**. Use path mappings in your config to document these relationships for proper path translation in logs and the dashboard.
-
-## API Endpoints
-
-Refresherr exposes several API endpoints for integration and debugging:
-
-- `GET /api/config` - Current configuration (with sensitive data masked)
-- `GET /api/routes` - Routing and path mapping information with examples
-- `GET /api/stats` - Symlink health statistics
-- `GET /api/broken` - List of broken symlinks
-- `GET /api/movies` - Movie library data
-- `GET /api/episodes` - Episode library data
-
-### Example: Viewing Configuration
+### Build the Container
 
 ```bash
-curl http://localhost:8088/api/config | jq
+docker build -t refresherr .
 ```
 
-```json
-{
-  "scan": {
-    "roots": ["/opt/media/jelly/tv", "/opt/media/jelly/hayu"],
-    "interval": 300
-  },
-  "routing": [
-    {"prefix": "/opt/media/jelly/hayu", "type": "sonarr_hayu"},
-    {"prefix": "/opt/media/jelly/tv", "type": "sonarr_tv"}
-  ],
-  "path_mappings": [
-    {
-      "container_path": "/opt/media/jelly",
-      "logical_path": "/mnt/storage/media/jelly",
-      "description": "Jellyfin symlink root"
-    }
-  ]
-}
-```
+### Build the React Dashboard
 
-### Example: Viewing Routes with Examples
-
-```bash
-curl http://localhost:8088/api/routes | jq
-```
-
-This endpoint provides routing configuration along with practical examples for troubleshooting.
-
-## Dashboard
-
-The web-based dashboard provides a user-friendly interface for monitoring and managing Refresherr.
-
-### Features
-
-- **Real-time statistics**: View symlink health, broken counts, and repair status
-- **Auto-repair orchestrator toggle**: Enable/disable automatic repairs (OFF by default)
-- **Manual repair buttons**: On-demand Cinesync and ARR repairs with live stats
-- **Repair history**: Complete log of all repair runs with detailed statistics
-- **Live repair status**: Real-time updates during active repair runs
-- **Dry-run toggle**: Enable/disable dry-run mode with one click
-- **Configuration visibility**: See current routing, path mappings, and settings
-- **Broken symlink list**: Browse and manually trigger repairs for broken symlinks
-- **Movie/Episode library**: View symlinked content from your Sonarr/Radarr instances
-- **Responsive design**: Works on desktop and mobile devices
-
-### Accessing the Dashboard
-
-The dashboard runs on port 8088 by default:
-
-```
-http://localhost:8088
-```
-
-Or from another machine:
-
-```
-http://YOUR_SERVER_IP:8088
-```
-
-### Dry Run Toggle
-
-The dashboard header includes a prominent **Dry Run Mode** toggle:
-
-- **Toggle ON (default)**: Dry-run mode enabled - safe preview mode
-- **Toggle OFF**: Dry-run mode disabled - repairs will be executed
-
-The toggle state is synchronized with the backend and persists across sessions.
-
-**Visual indicators**:
-- 🟢 **Green toggle** = Dry-run ON (safe mode)
-- 🔴 **Red toggle** = Dry-run OFF (active repairs)
-
-### Auto-Repair Orchestrator Toggle
-
-The dashboard includes an **Auto-Repair Orchestrator** section with a toggle control:
-
-- **Toggle OFF (default)**: Automatic repairs disabled - manual control only
-- **Toggle ON**: Automatic repairs enabled - orchestrator will attempt repairs for broken symlinks
-
-When enabled, the orchestrator automatically sequences:
-1. Cinesync repair (hotswap from library)
-2. ARR repair (Sonarr/Radarr searches)
-3. Post-repair scan (status update)
-
-The orchestrator state persists in the database across restarts.
-
-### Manual Repair Buttons
-
-Two prominent buttons allow on-demand repair execution:
-
-**🎬 Run Cinesync Repair Now**
-- Triggers immediate Cinesync repair
-- Shows live progress and statistics
-- Results appear in repair history
-
-**📡 Run ARR Repair Now**
-- Triggers immediate ARR repair
-- Queues and processes relay actions
-- Updates dashboard upon completion
-
-Both buttons work independently of the orchestrator toggle. Use them for:
-- Testing repair functionality
-- One-off repair runs
-- Targeted repairs after configuration changes
-
-### Repair History & Live Status
-
-The dashboard displays comprehensive repair tracking:
-
-**Repair History Table:**
-- Date/time of each repair run
-- Repair source (cinesync, arr)
-- Trigger type (manual, auto)
-- Status (running, completed, failed)
-- Statistics: found, repaired, skipped, failed
-
-**Live Status Display:**
-When a repair is running, shows:
-- Current repair source
-- Real-time statistics
-- Progress indicators
-- Auto-refreshes every 5 seconds
-
-### Dashboard Pages
-
-1. **Home** (`/`): Overview with statistics and health metrics
-2. **Broken** (`/broken`): List of broken symlinks with repair actions
-3. **Movies** (`/movies`): Movie library from Radarr
-4. **Episodes** (`/episodes`): Episode library from Sonarr
-
-### Building the React Dashboard (Development)
-
-For development or customization:
+The dashboard is pre-built and included in the container. To rebuild:
 
 ```bash
 cd dashboard
@@ -651,478 +541,44 @@ npm install
 npm run build
 ```
 
-The built static assets can be served by the backend at `/static` (planned for unified deployment).
+Built files are automatically copied into the container during image build.
 
-## Database Schema
+### Development Mode
 
-Refresherr uses SQLite to track symlink status, repair actions, and media metadata.
-
-### Database Location
-
-Default: `/data/symlinks.db` (configurable via `DATA_DIR` environment variable)
-
-### Core Tables
-
-**symlinks** - Tracks all scanned symlinks
-- `path` (PRIMARY KEY): Full path to the symlink
-- `last_target`: Target path the symlink points to
-- `status`: Current status (ok, broken, repairing)
-- `last_status`: Most recent status for compatibility
-- `first_seen_utc`: When first discovered
-- `last_seen_utc`: Last scan timestamp
-
-**actions** - Queued repair/search actions
-- `id` (PRIMARY KEY): Auto-incrementing action ID
-- `url`: Relay URL to invoke for repair
-- `status`: Action status (pending, sent, failed)
-- `reason`: Why action was created (e.g., auto-search)
-- `related_path`: Associated symlink path
-- `created_utc`: When action was queued
-- `fired_utc`: When action was executed
-- `last_error`: Error message if failed
-
-### Media Metadata Tables
-
-**movies** - Radarr movie metadata
-- Links to `movie_files` for symlink tracking
-
-**series** - Sonarr series metadata
-- Links to `episode_files` for symlink tracking
-
-**movie_files** / **episode_files** - File metadata with symlink paths
-- Ingested from Sonarr/Radarr APIs
-- Links library content to symlinks
-
-### Repair Orchestrator Tables
-
-**repair_runs** - Tracks individual repair executions
-- `id` (PRIMARY KEY): Auto-incrementing run ID
-- `run_type`: Type of run (repair, scan)
-- `repair_source`: Source of repair (cinesync, arr, manual)
-- `status`: Run status (running, completed, failed)
-- `trigger`: How run was triggered (manual, auto, scheduled)
-- `started_utc`: When run started
-- `completed_utc`: When run completed
-- `broken_found`: Number of broken symlinks found
-- `repaired`: Number successfully repaired
-- `skipped`: Number skipped
-- `failed`: Number that failed repair
-- `error_message`: Error details if run failed
-
-**repair_stats** - Detailed per-item repair statistics
-- `id` (PRIMARY KEY): Auto-incrementing stat ID
-- `run_id`: Foreign key to repair_runs
-- `symlink_path`: Path to symlink being repaired
-- `result`: Result of repair (repaired, skipped, failed)
-- `details`: Additional details about the repair
-- `timestamp_utc`: When repair was attempted
-
-**orchestrator_state** - Orchestrator configuration
-- `id`: Always 1 (singleton)
-- `enabled`: Whether auto-repair is enabled (0/1)
-- `last_auto_run_utc`: Timestamp of last automatic run
-- `updated_utc`: When state was last modified
-
-### Database Operations
-
-**View database statistics**:
-```bash
-docker-compose exec refresher python -m refresher.tools.db_stats
-```
-
-**Reset database** (⚠️ DESTRUCTIVE):
-```python
-from refresher.core import db
-db.nuke_database(confirm=True)
-```
-
-For detailed schema documentation, see the source code in `app/refresher/core/db.py`.
-
-## Manual Tools
-
-Refresherr includes manual tools for safe, step-by-step operations without automatic behavior.
-
-### Available Tools
-
-**1. Database Statistics** - View symlink status counts
+Run services separately for development:
 
 ```bash
-docker-compose exec refresher python -m refresher.tools.db_stats
+# Terminal 1: Backend scanner
+cd app
+python -m cli run
+
+# Terminal 2: Dashboard API
+cd services/dashboard
+pip install -r requirements.txt
+python app.py
+
+# Terminal 3: React dev server
+cd dashboard
+npm start
 ```
 
-Shows:
-- Total symlinks scanned
-- Broken vs. OK counts
-- Top directories with issues
-
-**2. Queue Repairs** - Manually queue repair actions
-
-```bash
-docker-compose exec refresher python -m refresher.tools.queue_repairs
-```
-
-Environment variables needed:
-- `RELAY_BASE`: Relay service URL
-- `RELAY_TOKEN`: Auth token
-- `ROUTE_MAP`: Path-to-instance mapping
-- `QUEUE_LIMIT`: Max actions to queue (default: 25)
-
-**3. Process Actions** - Execute queued actions
-
-```bash
-docker-compose exec refresher python -m refresher.tools.process_actions
-```
-
-Options:
-- Set `ACTIONS_DRY_RUN=1` for preview mode
-- Set `ACTIONS_MAX=N` to limit execution count
-
-**4. Repair Season** - Repair a specific season
-
-Located at `app/refresher/tools/repair_season.py`, this tool repairs symlinks for a specific show and season.
-
-**5. CineSync Repair** - Match broken symlinks to CineSync library
-
-Located at `app/refresher/tools/cinesync_repair.py`, this tool can repair symlinks using an alternative file source.
-
-### Safety Features
-
-All manual tools:
-- ✅ Require explicit execution
-- ✅ Support dry-run mode
-- ✅ Log all actions to database
-- ✅ Never auto-delete or quarantine files
-- ✅ Preview changes before applying
-
-## API Endpoints
-
-Refresherr exposes REST API endpoints for integration, automation, and debugging.
-
-### Configuration Endpoints
-
-**GET `/api/config`** - Current configuration (sensitive data masked)
-
-```bash
-curl http://localhost:8088/api/config | jq
-```
-
-Response includes:
-- Scan roots and interval
-- Routing configuration
-- Path mappings
-- Dry-run status
-- Database location
-
-**GET `/api/routes`** - Routing and path mapping with examples
-
-```bash
-curl http://localhost:8088/api/routes | jq
-```
-
-Shows:
-- Route prefixes and target instances
-- Container↔host path mappings
-- Example paths for each route
-
-### Data Endpoints
-
-**GET `/api/stats`** - Symlink health statistics
-
-```bash
-curl http://localhost:8088/api/stats | jq
-```
-
-Returns counts for:
-- Total/broken/OK symlinks
-- Movies linked/total
-- Episodes linked/total
-- Health percentages
-
-**GET `/api/broken`** - List of broken symlinks
-
-```bash
-curl http://localhost:8088/api/broken | jq
-```
-
-Returns array of broken symlink objects with paths, targets, and metadata.
-
-**GET `/api/manifest`** - Dry run manifest (preview of actions)
-
-```bash
-curl http://localhost:8088/api/manifest | jq
-```
-
-Returns detailed manifest showing:
-- All broken symlinks detected
-- Routing information for each symlink
-- Relay URLs that would be called
-- Summary counts by kind and route type
-- Timestamp of scan
-
-This endpoint is especially useful for understanding what would happen when dry-run is disabled.
-
-**GET `/api/movies`** - Movie library data
-
-Returns all symlinked movies from Radarr instances.
-
-**GET `/api/episodes`** - Episode library data
-
-Returns all symlinked episodes from Sonarr instances.
-
-### Health Endpoints
-
-**GET `/health`** - Service health check
-
-Returns `{"ok": true}` if database is accessible.
-
-**GET `/dbcheck`** - Database table verification
-
-Shows row counts for all tables and schema information.
-
-**POST `/api/config/dryrun`** - Toggle dry run mode
-
-```bash
-# Enable dry run
-curl -X POST http://localhost:8088/api/config/dryrun \
-  -H "Content-Type: application/json" \
-  -d '{"dryrun": true}'
-
-# Disable dry run
-curl -X POST http://localhost:8088/api/config/dryrun \
-  -H "Content-Type: application/json" \
-  -d '{"dryrun": false}'
-```
-
-Note: This updates the environment variable for the current process. For persistent changes across restarts, update `.env` file manually.
-
-### Orchestrator Endpoints
-
-**POST `/api/orchestrator/toggle`** - Enable/disable auto-repair orchestrator
-
-```bash
-# Enable orchestrator
-curl -X POST http://localhost:8088/api/orchestrator/toggle \
-  -H "Content-Type: application/json" \
-  -d '{"enabled": true}'
-
-# Disable orchestrator
-curl -X POST http://localhost:8088/api/orchestrator/toggle \
-  -H "Content-Type: application/json" \
-  -d '{"enabled": false}'
-```
-
-Returns the updated orchestrator state and confirmation message. State persists in database across restarts.
-
-**GET `/api/orchestrator/status`** - Get orchestrator state
-
-```bash
-curl http://localhost:8088/api/orchestrator/status | jq
-```
-
-Returns:
-- `enabled`: Boolean indicating if auto-repair is enabled
-- `last_auto_run_utc`: Timestamp of last automatic repair run
-- `updated_utc`: When state was last modified
-- `current_run`: Details of currently running repair, if any
-
-### Repair Endpoints
-
-**POST `/api/repair/cinesync`** - Manually trigger Cinesync repair
-
-```bash
-curl -X POST http://localhost:8088/api/repair/cinesync \
-  -H "Content-Type: application/json"
-```
-
-Initiates a Cinesync repair run. Returns:
-- `run_id`: ID of the repair run
-- `status`: "completed" or "failed"
-- `broken_found`: Number of broken symlinks found
-- `repaired`: Number successfully repaired
-- `skipped`: Number skipped
-- `failed`: Number that failed repair
-- `error_message`: Error details if failed
-
-**POST `/api/repair/arr`** - Manually trigger ARR repair
-
-```bash
-curl -X POST http://localhost:8088/api/repair/arr \
-  -H "Content-Type: application/json"
-```
-
-Initiates an ARR (Sonarr/Radarr) repair run. Returns same structure as Cinesync endpoint.
-
-**GET `/api/repair/status`** - Get current repair run status
-
-```bash
-curl http://localhost:8088/api/repair/status | jq
-```
-
-Returns:
-- `running`: Boolean indicating if a repair is active
-- `run`: Details of current repair run (if running)
-  - Source, trigger, start time
-  - Live statistics (found, repaired, skipped, failed)
-
-**GET `/api/repair/history`** - Get repair run history
-
-```bash
-# Get last 50 runs (default)
-curl http://localhost:8088/api/repair/history | jq
-
-# Get last 100 runs
-curl http://localhost:8088/api/repair/history?limit=100 | jq
-
-# Paginate (skip first 50)
-curl http://localhost:8088/api/repair/history?limit=50&offset=50 | jq
-```
-
-Returns array of repair runs with:
-- ID, date/time, source, trigger
-- Status (running, completed, failed)
-- Statistics for each run
-- Error messages for failed runs
-
-### Example API Usage
-
-**Check if dry-run is enabled**:
-```bash
-curl -s http://localhost:8088/api/config | jq '.dryrun'
-```
-
-**Get broken symlink count**:
-```bash
-curl -s http://localhost:8088/api/stats | jq '.symlinks.broken'
-```
-
-**View routing for troubleshooting**:
-```bash
-curl -s http://localhost:8088/api/routes | jq '.examples'
-```
-
-**Preview dry run manifest**:
-```bash
-curl -s http://localhost:8088/api/manifest | jq
-```
-
-**Enable auto-repair orchestrator**:
-```bash
-curl -X POST http://localhost:8088/api/orchestrator/toggle \
-  -H "Content-Type: application/json" \
-  -d '{"enabled": true}' | jq
-```
-
-**Check orchestrator status**:
-```bash
-curl -s http://localhost:8088/api/orchestrator/status | jq '.state.enabled'
-```
-
-**Trigger manual repair**:
-```bash
-# Cinesync repair
-curl -X POST http://localhost:8088/api/repair/cinesync | jq
-
-# ARR repair
-curl -X POST http://localhost:8088/api/repair/arr | jq
-```
-
-**View repair history**:
-```bash
-curl -s http://localhost:8088/api/repair/history | jq '.history[] | {date: .started_utc, source: .repair_source, repaired: .repaired, failed: .failed}'
-```
-
-## Troubleshooting
-
-### Path Routing Issues
-
-If symlinks are routing to the wrong instance:
-
-1. Check routing configuration: `curl http://localhost:8088/api/routes`
-2. Verify path prefixes match your directory structure
-3. Remember routes are matched longest-prefix-first
-4. Check the examples provided by the API for expected behavior
-
-### Path Mapping Issues
-
-If paths look incorrect in logs or the dashboard:
-
-1. Check path mappings: `curl http://localhost:8088/api/config`
-2. Verify volume mounts in `docker-compose.yml` match your path mappings
-3. Ensure container paths align with the paths in your config file
-
-### Configuration Not Loading
-
-1. Check `CONFIG_FILE` environment variable points to the correct file
-2. Verify YAML syntax: `python -c "import yaml; yaml.safe_load(open('config/config.yaml'))"`
-3. Check file permissions and volume mounts
-4. Review container logs: `docker logs refresher`
-
-### Dry Run Mode Not Working
-
-If repairs are happening when dry-run should be enabled:
-
-1. Check environment: `docker-compose exec refresher env | grep DRYRUN`
-2. Verify config: `curl http://localhost:8088/api/config | jq '.dryrun'`
-3. Restart services after changing `.env`: `docker-compose restart`
-4. Check logs for dry-run status in scan output
-
-### Database Issues
-
-**Database locked errors**:
-1. Ensure only one scanner instance is running
-2. Check for long-running queries
-3. Increase timeout in code if needed
-
-**Corrupted database**:
-```bash
-# Backup first
-cp /data/symlinks.db /data/symlinks.db.backup
-
-# Check integrity
-sqlite3 /data/symlinks.db "PRAGMA integrity_check;"
-```
-
-### Mount Not Found Errors
-
-If scanner reports "mount not present":
-
-1. Verify mount exists: `ls -la /mnt/remote/realdebrid`
-2. Check Docker volume mounts in `docker-compose.yml`
-3. Ensure mount is accessible inside container: `docker exec refresher ls -la /mnt/remote/realdebrid`
-4. Review `mount_checks` in config file
-
-### Getting Help
-
-1. Check logs: `docker-compose logs -f refresher`
-2. Review API responses for diagnostic info
-3. Use manual tools to test individual operations
-4. Open an issue on GitHub with logs and configuration (redact secrets!)
-
-## Additional Documentation
-
-For more detailed information, see:
-
-- **[Deployment Guide](DEPLOYMENT.md)** - Complete deployment documentation including unified backend approach
-- **[Dashboard UX Guide](DASHBOARD_UX_GUIDE.md)** - Dashboard usage, troubleshooting, and routing visibility
-- **[Usage Examples](USAGE_EXAMPLES.md)** - Common workflows and practical examples
-- **[Implementation Details](IMPLEMENTATION_SUMMARY.md)** - Technical implementation notes
+## Contributing
+
+Contributions welcome! Please:
+1. Test changes thoroughly in dry-run mode
+2. Follow existing code style
+3. Update documentation for new features
+4. Include tests where applicable
 
 ## License
 
 See [LICENSE](LICENSE) for details.
 
-## Contributing
+## Support
 
-Contributions are welcome! Please:
-1. Test changes thoroughly in dry-run mode first
-2. Follow existing code style and conventions
-3. Update documentation for any new features
-4. Include tests where applicable
+- **Issues**: https://github.com/Bollo123view/refresherr/issues
+- **Discussions**: https://github.com/Bollo123view/refresherr/discussions
 
-## Changelog
+---
 
-See commit history for detailed changes. Major updates:
-- **2026-01**: Added dry-run manifest feature, consolidated documentation, dashboard toggle
-- **2025-12**: Central configuration system with path routing and mappings
-- **2025-11**: React dashboard with real-time statistics
-- **2025-10**: Initial release with symlink scanning and repair
+**Version:** See [VERSION](VERSION) file
