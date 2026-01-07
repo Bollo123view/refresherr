@@ -1,0 +1,68 @@
+version: '3.8'
+
+# Refresherr - Single Container Architecture
+# All-in-one container with scanner, dashboard API, React UI, and relay logic
+
+services:
+  refresherr:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: refresherr
+    env_file:
+      - .env
+    environment:
+      # Core settings (override via .env)
+      - CONFIG_FILE=/config/config.yaml
+      - DATA_DIR=/data
+      - DRYRUN=${DRYRUN:-true}
+      - SCAN_INTERVAL=${SCAN_INTERVAL:-300}
+      
+      # Internal relay (no token needed for single container)
+      - RELAY_BASE=http://127.0.0.1:5050
+      - RELAY_TOKEN=${RELAY_TOKEN:-internal}
+      
+      # Dashboard settings
+      - FLASK_SECRET=${FLASK_SECRET:-change-me-to-random-string}
+      - PORT=8088
+      
+      # Optional: Discord notifications
+      - DISCORD_WEBHOOK=${DISCORD_WEBHOOK:-}
+    
+    volumes:
+      # Configuration (read-only)
+      - ./config:/config:ro
+      
+      # Data directory (read-write for database and logs)
+      - ./data:/data
+      
+      # Media symlink root (read-write for repairs)
+      # IMPORTANT: Adjust these paths to match your host system
+      - /opt/media:/opt/media:rw
+      
+      # Actual file storage (read-only)
+      # IMPORTANT: Adjust this path to your RealDebrid mount
+      - /mnt/realdebrid:/mnt/remote/realdebrid:ro
+    
+    ports:
+      - "${PORT:-8088}:8088"
+    
+    restart: unless-stopped
+    
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8088/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    
+    # Optional: Security hardening
+    # security_opt:
+    #   - no-new-privileges:true
+    # cap_drop:
+    #   - ALL
+    # cap_add:
+    #   - CHOWN
+    #   - DAC_OVERRIDE
+
+# No networks needed - everything runs in single container
