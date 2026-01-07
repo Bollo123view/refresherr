@@ -61,12 +61,30 @@ cleanup() {
 trap cleanup SIGTERM SIGINT
 
 # Start relay service in background (internal, no external exposure needed)
-echo "Starting internal relay service..."
+echo "Starting internal relay service on 127.0.0.1:5050..."
 python -c "from relay_app import app; app.run(host='127.0.0.1', port=5050)" &
 RELAY_PID=$!
 
-# Give relay a moment to start
-sleep 2
+# Wait for relay to be ready (with timeout)
+echo "Waiting for relay service to be ready..."
+for i in {1..10}; do
+    # Check if process is still running
+    if ! kill -0 "$RELAY_PID" 2>/dev/null; then
+        echo "ERROR: Relay service process died"
+        exit 1
+    fi
+    # Try to connect to the health endpoint
+    if curl -sf http://127.0.0.1:5050/health >/dev/null 2>&1; then
+        echo "Relay service is ready"
+        break
+    fi
+    if [ $i -eq 10 ]; then
+        echo "ERROR: Relay service failed to become ready after 10 seconds"
+        kill -TERM "$RELAY_PID" 2>/dev/null || true
+        exit 1
+    fi
+    sleep 1
+done
 
 # Check if relay started successfully
 if ! kill -0 "$RELAY_PID" 2>/dev/null; then
@@ -75,19 +93,31 @@ if ! kill -0 "$RELAY_PID" 2>/dev/null; then
 fi
 
 # Start dashboard/API service in background
-echo "Starting dashboard API..."
+echo "Starting dashboard API on port 8088..."
 python dashboard_app.py &
 DASHBOARD_PID=$!
 
-# Give dashboard a moment to start
-sleep 2
-
-# Check if dashboard started successfully
-if ! kill -0 "$DASHBOARD_PID" 2>/dev/null; then
-    echo "ERROR: Dashboard service failed to start"
-    kill -TERM "$RELAY_PID" 2>/dev/null || true
-    exit 1
-fi
+# Wait for dashboard to be ready (with timeout)
+echo "Waiting for dashboard service to be ready..."
+for i in {1..10}; do
+    # Check if process is still running
+    if ! kill -0 "$DASHBOARD_PID" 2>/dev/null; then
+        echo "ERROR: Dashboard service process died"
+        kill -TERM "$RELAY_PID" 2>/dev/null || true
+        exit 1
+    fi
+    # Try to connect to the health endpoint
+    if curl -sf http://localhost:8088/health >/dev/null 2>&1; then
+        echo "Dashboard service is ready"
+        break
+    fi
+    if [ $i -eq 10 ]; then
+        echo "ERROR: Dashboard service failed to become ready after 10 seconds"
+        kill -TERM "$RELAY_PID" "$DASHBOARD_PID" 2>/dev/null || true
+        exit 1
+    fi
+    sleep 1
+done
 
 echo "All services started successfully"
 echo "  - Relay: PID $RELAY_PID (internal: 127.0.0.1:5050)"

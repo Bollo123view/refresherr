@@ -26,7 +26,9 @@ services:
       - FLASK_SECRET=${FLASK_SECRET:-change-me-to-random-string}
       - PORT=8088
       
-      # Optional: Discord notifications
+      # Optional: Discord notifications (webhook URL)
+      # Get webhook from Discord: Server Settings > Integrations > Webhooks
+      # Format: https://discord.com/api/webhooks/ID/TOKEN
       - DISCORD_WEBHOOK=${DISCORD_WEBHOOK:-}
     
     volumes:
