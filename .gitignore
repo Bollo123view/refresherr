@@ -13,12 +13,32 @@ __pycache__/
 *$py.class
 *.so
 
+# Node.js / React
+node_modules/
+dashboard/build/
+dashboard/node_modules/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Docker
+*.tar
+docker-compose.override.yml
+
 # Runtime / local data
 data/
 *.log
 refresherr-*.zip
 *.zip.sha256
 *.bak
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 
 # Test scripts
 test_api.py
