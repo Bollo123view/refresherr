@@ -18,8 +18,8 @@ services:
       - DRYRUN=${DRYRUN:-true}
       - SCAN_INTERVAL=${SCAN_INTERVAL:-300}
       
-      # Internal relay (no token needed for single container)
-      - RELAY_BASE=http://127.0.0.1:5050
+      # Internal relay (runs on localhost for single-container mode)
+      - RELAY_BASE=${RELAY_BASE:-http://localhost:5050}
       - RELAY_TOKEN=${RELAY_TOKEN:-internal}
       
       # Dashboard settings

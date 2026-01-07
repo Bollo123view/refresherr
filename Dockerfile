@@ -44,20 +44,54 @@ COPY services/research-relay/app.py /app/relay_app.py
 # Copy built React dashboard
 COPY --from=dashboard-builder /dashboard/build /app/static
 
-# Create entrypoint script
+# Create entrypoint script with proper error handling and process management
 RUN cat > /app/entrypoint.sh <<'EOF'
 #!/bin/bash
 set -e
 
+# Function to handle cleanup on exit
+cleanup() {
+    echo "Shutting down services..."
+    kill -TERM "$RELAY_PID" "$DASHBOARD_PID" 2>/dev/null || true
+    wait
+    exit 0
+}
+
+# Set up signal handlers
+trap cleanup SIGTERM SIGINT
+
 # Start relay service in background (internal, no external exposure needed)
-echo "Starting relay service..."
+echo "Starting internal relay service..."
 python -c "from relay_app import app; app.run(host='127.0.0.1', port=5050)" &
 RELAY_PID=$!
+
+# Give relay a moment to start
+sleep 2
+
+# Check if relay started successfully
+if ! kill -0 "$RELAY_PID" 2>/dev/null; then
+    echo "ERROR: Relay service failed to start"
+    exit 1
+fi
 
 # Start dashboard/API service in background
 echo "Starting dashboard API..."
 python dashboard_app.py &
 DASHBOARD_PID=$!
+
+# Give dashboard a moment to start
+sleep 2
+
+# Check if dashboard started successfully
+if ! kill -0 "$DASHBOARD_PID" 2>/dev/null; then
+    echo "ERROR: Dashboard service failed to start"
+    kill -TERM "$RELAY_PID" 2>/dev/null || true
+    exit 1
+fi
+
+echo "All services started successfully"
+echo "  - Relay: PID $RELAY_PID (internal: 127.0.0.1:5050)"
+echo "  - Dashboard: PID $DASHBOARD_PID (port 8088)"
 
 # Start scanner service in foreground
 echo "Starting scanner..."
