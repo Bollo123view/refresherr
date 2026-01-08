@@ -1,6 +1,6 @@
 import typer
 from refresher.core.scanner import run_loop, one_scan
-from refresher.core.store import get_pending, mark_fired
+from refresher.core.store import get_pending, mark_sent
 from refresher.core.orchestrator import get_orchestrator_state, set_orchestrator_enabled
 import requests, time
 
@@ -21,7 +21,7 @@ def replay_actions(limit: int = 50, delay: float = 2.0):
     """Trigger pending Sonarr/Radarr searches from the DB queue."""
     pending = get_pending(limit=limit)
     fired = 0
-    for kind, name, season, scope, url in pending:
+    for action_id, url in pending:
         ok = False
         try:
             if url:
@@ -29,7 +29,7 @@ def replay_actions(limit: int = 50, delay: float = 2.0):
                 ok = True
         except requests.RequestException:
             ok = False
-        mark_fired(kind, name, season, scope, ok)
+        mark_sent(action_id, ok)
         fired += 1
         time.sleep(delay)
     print({"fired": fired, "remaining": max(0, len(pending) - fired)})
