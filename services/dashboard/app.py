@@ -79,15 +79,16 @@ def db():
             conn = sqlite3.connect(p, timeout=5, check_same_thread=False)
             conn.row_factory = sqlite3.Row
             initialize_schema(conn)
+            conn.close()  # Close after initialization
             print(f"Database initialized at {p}")
-        except ImportError:
-            # Fallback: create empty database if core module unavailable
-            conn = sqlite3.connect(p, timeout=5, check_same_thread=False)
-            conn.row_factory = sqlite3.Row
-            print(f"Database created at {p} (schema initialization unavailable)")
-    else:
-        conn = sqlite3.connect(p, timeout=5, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
+        except Exception as e:
+            # Fallback: create empty database if core module unavailable or initialization fails
+            print(f"Warning: Could not initialize database schema: {e}")
+            print(f"Creating empty database at {p}")
+    
+    # Open connection (whether newly created or existing)
+    conn = sqlite3.connect(p, timeout=5, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON;")
     conn.execute("PRAGMA busy_timeout=5000;")
     return conn
