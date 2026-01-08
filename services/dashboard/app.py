@@ -81,12 +81,19 @@ def db():
             initialize_schema(conn)
             conn.close()  # Close after initialization
             print(f"Database initialized at {p}")
+        except ImportError as e:
+            # Core module not available - create empty database
+            print(f"Warning: Could not import refresher.core.db: {e}")
+            print(f"Creating empty database at {p} (schema initialization skipped)")
+            # SQLite will create the file on first connection below
         except Exception as e:
-            # Fallback: create empty database if core module unavailable or initialization fails
+            # Schema initialization failed - database file may be created but empty
             print(f"Warning: Could not initialize database schema: {e}")
-            print(f"Creating empty database at {p}")
+            print(f"Database file created at {p} but schema may be incomplete")
+            # Continue - the file should exist now, even if schema failed
     
     # Open connection (whether newly created or existing)
+    # SQLite will create the file if it doesn't exist (fallback case)
     conn = sqlite3.connect(p, timeout=5, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON;")
