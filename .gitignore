@@ -42,3 +42,6 @@ refresherr-*.zip
 
 # Test scripts
 test_api.py
+
+# User config (only sample should be in repo)
+config/config.yaml

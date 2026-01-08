@@ -1,6 +1,7 @@
 import typer
 from refresher.core.scanner import run_loop, one_scan
 from refresher.core.store import get_pending, mark_fired
+from refresher.core.orchestrator import get_orchestrator_state, set_orchestrator_enabled
 import requests, time
 
 app = typer.Typer(add_completion=False)
@@ -32,3 +33,22 @@ def replay_actions(limit: int = 50, delay: float = 2.0):
         fired += 1
         time.sleep(delay)
     print({"fired": fired, "remaining": max(0, len(pending) - fired)})
+
+@app.command()
+def orchestrator_status():
+    """Show the current auto-repair orchestrator status."""
+    state = get_orchestrator_state()
+    status = "ENABLED" if state["enabled"] else "DISABLED"
+    print(f"Auto-repair orchestrator: {status}")
+    if state.get("last_auto_run_utc"):
+        print(f"Last automatic run: {state['last_auto_run_utc']}")
+    print(f"Last updated: {state['updated_utc']}")
+
+@app.command()
+def orchestrator_toggle(enable: bool = typer.Option(..., "--enable/--disable", help="Enable or disable auto-repair")):
+    """Toggle the auto-repair orchestrator on or off."""
+    state = set_orchestrator_enabled(enable)
+    status = "ENABLED" if state["enabled"] else "DISABLED"
+    print(f"Auto-repair orchestrator: {status}")
+    print(f"Updated: {state['updated_utc']}")
+
