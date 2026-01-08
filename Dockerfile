@@ -125,7 +125,9 @@ echo "  - Dashboard: PID $DASHBOARD_PID (port 8088)"
 
 # Start scanner service in foreground
 echo "Starting scanner..."
-exec python -m cli run
+# Use direct import instead of CLI to ensure reliable startup
+# Alternative: python -m cli run (also works after fixing cli.py)
+exec python -c "from refresher.core.scanner import run_loop; run_loop()"
 EOF
 
 RUN chmod +x /app/entrypoint.sh
