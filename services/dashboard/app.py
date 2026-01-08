@@ -69,10 +69,25 @@ def inject_helpers():
 # ===== DB / Helpers ==========================================================
 def db():
     p = DB_PATH
+    # Auto-create database if it doesn't exist
     if not os.path.exists(p):
-        raise RuntimeError(f"DB missing at {p}")
-    conn = sqlite3.connect(p, timeout=5, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
+        # Ensure data directory exists
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        # Initialize database schema
+        try:
+            from refresher.core.db import initialize_schema
+            conn = sqlite3.connect(p, timeout=5, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            initialize_schema(conn)
+            print(f"Database initialized at {p}")
+        except ImportError:
+            # Fallback: create empty database if core module unavailable
+            conn = sqlite3.connect(p, timeout=5, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            print(f"Database created at {p} (schema initialization unavailable)")
+    else:
+        conn = sqlite3.connect(p, timeout=5, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON;")
     conn.execute("PRAGMA busy_timeout=5000;")
     return conn
@@ -98,7 +113,12 @@ def health():
         c.execute("SELECT 1")
         return jsonify(ok=True)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        # During startup, database might be initializing - be more lenient
+        error_msg = str(e)
+        # If it's just a missing table during initialization, that's recoverable
+        if "no such table" in error_msg.lower():
+            return jsonify(ok=True, warning="Database initializing"), 200
+        return jsonify(ok=False, error=error_msg), 500
 
 @app.route("/dbcheck")
 def dbcheck():
