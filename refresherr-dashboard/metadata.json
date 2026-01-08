@@ -1,0 +1,5 @@
+{
+  "name": "Refresherr Dashboard",
+  "description": "A sleek, high-performance monitoring and repair dashboard for media library symlinks, featuring real-time statistics, broken link management, and orchestrator controls.",
+  "requestFramePermissions": []
+}
