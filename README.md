@@ -203,6 +203,71 @@ RADARR_4K_URL=http://radarr-4k:7878
 RADARR_4K_API=your-api-key-here
 ```
 
+### CineSync Configuration
+
+CineSync is a **hotswap repair** feature that uses an existing media library as a source to quickly repair broken symlinks without triggering new downloads.
+
+**How it works:**
+1. You maintain a secondary library (the "CineSync library") with shows/movies
+2. When a symlink breaks in your main library, CineSync searches the CineSync library for a matching file
+3. If found, it replaces the broken symlink to point directly to the real file (not the CineSync symlink)
+4. This provides instant repair without waiting for Sonarr/Radarr downloads
+
+**Configuration in `.env`:**
+
+```bash
+# CineSync base folder (your secondary media library structure)
+CINESYNC_BASE=/opt/media/jelly/cinesync/CineSync
+
+# Directories to repair (where your main broken symlinks live)
+CINESYNC_REPAIR_ROOTS=/opt/media/jelly/tv,/opt/media/jelly/movies
+
+# Safety: dry-run mode (1=preview only, 0=actual repairs)
+CINESYNC_DRY_RUN=1
+
+# Limit broken symlinks to attempt per run
+CINESYNC_LIMIT=200
+
+# Security: Only create symlinks to paths starting with these prefixes
+CINESYNC_ALLOWED_TARGET_PREFIXES=/mnt/remote
+```
+
+**Important Notes:**
+- CineSync library must follow specific folder structure: `Shows/{Show Name}/Season N/episode.mkv`
+- The CineSync folder should **NOT** be in your scan roots (see Ignore Patterns below)
+- CineSync runs first in the auto-repair sequence, then ARR handles remaining breaks
+- Set `CINESYNC_DRY_RUN=0` when ready to enable actual repairs
+
+### Scanner Ignore Patterns
+
+The scanner can skip directories and files matching specific patterns. This is **critical** for CineSync users to prevent circular repair attempts.
+
+**Why exclude the CineSync library?**
+- It's a SOURCE for repairs, not a target to monitor
+- Scanning it would create duplicate/circular repair attempts
+- It may contain temporary or working files you don't want to track
+
+**Configure in `config/config.yaml`:**
+
+```yaml
+scan:
+  roots:
+    - /opt/media/jelly/tv
+    - /opt/media/jelly/movies
+    # Note: Do NOT include /opt/media/jelly/cinesync here
+  
+  ignore_patterns:
+    - cinesync          # Skip any path containing "cinesync"
+    - .tmp              # Skip temporary files
+    - .partial          # Skip partial downloads
+```
+
+**Or via environment variable:**
+
+```bash
+IGNORE_SUBSTR=cinesync
+```
+
 ## Usage
 
 ### Dry Run Mode (Default)
@@ -240,10 +305,24 @@ No user action needed - scanning starts automatically when the container launche
 
 The auto-repair orchestrator is **disabled by default** and must be explicitly enabled.
 
-**When enabled, it automatically:**
-1. 🎬 Attempts Cinesync repair (hotswap from library)
-2. 📡 Triggers ARR searches (Sonarr/Radarr)
-3. 🔄 Runs post-repair scan to update status
+**Repair Sequence:**
+
+When enabled, the orchestrator runs a coordinated repair workflow:
+
+1. **🎬 CineSync Repair (First)** - Hotswap from your CineSync library
+   - Fast repairs using existing files
+   - No downloads needed
+   - Matches show/episode/quality from CineSync folder structure
+   
+2. **📡 ARR Repair (Second)** - Search via Sonarr/Radarr for remaining broken links
+   - Triggers searches for items CineSync couldn't fix
+   - Queues downloads through your ARR instances
+   - Uses configured routing to send requests to correct instance
+   
+3. **🔄 Post-Repair Scan** - Verify what was fixed
+   - Updates database with new symlink states
+   - Generates repair statistics
+   - Available in dashboard and API
 
 **To enable:**
 
@@ -257,6 +336,18 @@ Via API:
 curl -X POST http://localhost:8088/api/orchestrator/toggle \
   -H "Content-Type: application/json" \
   -d '{"enabled": true}'
+```
+
+Via CLI:
+```bash
+# Enable
+docker exec refresherr python -m refresher.cli orchestrator-toggle --enable
+
+# Disable
+docker exec refresherr python -m refresher.cli orchestrator-toggle --disable
+
+# Check status
+docker exec refresherr python -m refresher.cli orchestrator-status
 ```
 
 The orchestrator state persists across container restarts.

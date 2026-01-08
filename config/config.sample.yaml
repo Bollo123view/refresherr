@@ -10,6 +10,11 @@
 scan:
   # Directories to scan for symlinks
   # Multiple roots can be specified for different media libraries
+  # 
+  # IMPORTANT: Do NOT include your CineSync library folder in scan roots!
+  # CineSync is a source for repairs, not a target to monitor.
+  # If you have a CineSync folder at /opt/media/jelly/cinesync, DO NOT add it here.
+  # Instead, add "cinesync" to ignore_patterns below.
   roots:
     - /opt/media/jelly/tv           # TV shows (general)
     - /opt/media/jelly/hayu         # TV shows (Hayu streaming)
@@ -17,6 +22,7 @@ scan:
     - /opt/media/jelly/movies       # Standard movies
     - /opt/media/jelly/doc          # Documentaries
     - /opt/media/plex/anime         # Anime library (separate Plex instance)
+    # NOTE: /opt/media/jelly/cinesync is intentionally NOT included
   
   # Mount points to verify before scanning
   # Scanner will abort if any of these are not present
@@ -39,9 +45,22 @@ scan:
   interval: 300
   
   # Patterns to ignore during scanning
-  # Files/directories matching these patterns will be skipped
+  # Files/directories matching these patterns will be SKIPPED by the scanner
+  # This is CRITICAL for CineSync: you must exclude your CineSync library folder
+  # from scanning to avoid treating it as a target to monitor and repair.
+  # 
+  # Why exclude CineSync folder?
+  # - It's the SOURCE for hotswap repairs, not a target to monitor
+  # - Scanning it would create duplicate/circular repair attempts
+  # - It may contain temporary or partial files
+  #
+  # Examples:
+  # - "cinesync" - Skip any path containing "cinesync"
+  # - "/opt/media/jelly/cinesync" - Skip specific CineSync folder
+  # - ".tmp" - Skip temporary files
+  # - ".partial" - Skip partial downloads
   ignore_patterns:
-    - cinesync          # CineSync temporary files
+    - cinesync          # CineSync library folder (IMPORTANT: always exclude this)
     - .tmp              # Temporary files
     - .partial          # Partial downloads
     - .DS_Store         # macOS metadata

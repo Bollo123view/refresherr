@@ -30,20 +30,38 @@ services:
       # Get webhook from Discord: Server Settings > Integrations > Webhooks
       # Format: https://discord.com/api/webhooks/ID/TOKEN
       - DISCORD_WEBHOOK=${DISCORD_WEBHOOK:-}
+      
+      # CineSync Configuration (optional - for hotswap repair from library)
+      # Base path to your CineSync library structure
+      - CINESYNC_BASE=${CINESYNC_BASE:-/opt/media/jelly/cinesync/CineSync}
+      
+      # Comma-separated list of paths to repair (where broken symlinks live)
+      - CINESYNC_REPAIR_ROOTS=${CINESYNC_REPAIR_ROOTS:-/opt/media/jelly/tv,/opt/media/jelly/movies}
+      
+      # Safety: dry-run mode for CineSync (1=dry-run, 0=live repairs)
+      - CINESYNC_DRY_RUN=${CINESYNC_DRY_RUN:-1}
+      
+      # Limit on broken symlinks to attempt per CineSync run
+      - CINESYNC_LIMIT=${CINESYNC_LIMIT:-200}
+      
+      # Comma-separated allowed target prefixes (for security)
+      - CINESYNC_ALLOWED_TARGET_PREFIXES=${CINESYNC_ALLOWED_TARGET_PREFIXES:-/mnt/remote}
     
     volumes:
-      # Configuration (read-only)
+      # Configuration files (read-only - contains config.yaml)
       - ./config:/config:ro
       
-      # Data directory (read-write for database and logs)
+      # Data directory (read-write - SQLite database and logs)
       - ./data:/data
       
-      # Media symlink root (read-write for repairs)
-      # IMPORTANT: Adjust these paths to match your host system
+      # Media symlink root (read-write - Refresherr repairs broken symlinks here)
+      # Example: /opt/media/jelly contains your Jellyfin/Plex library symlinks
+      # IMPORTANT: Adjust this path to match your actual media library location
       - /opt/media:/opt/media:rw
       
-      # Actual file storage (read-only)
-      # IMPORTANT: Adjust this path to your RealDebrid mount
+      # Actual file storage (read-only - RealDebrid/cloud mount)
+      # Example: /mnt/realdebrid is where your rclone mount points
+      # IMPORTANT: Adjust this path to your actual cloud/RealDebrid mount location
       - /mnt/realdebrid:/mnt/remote/realdebrid:ro
     
     ports:

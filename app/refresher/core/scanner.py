@@ -99,6 +99,7 @@ def scan_once(cfg_or_path: Any, dryrun: bool = True) -> dict:
     """
     # Initialize path_mappings for all code paths (empty list for legacy compatibility)
     path_mappings = []
+    ignore_patterns = []
     
     # Support new config module alongside legacy dict-based config
     if isinstance(cfg_or_path, RefresherrConfig):
@@ -111,6 +112,7 @@ def scan_once(cfg_or_path: Any, dryrun: bool = True) -> dict:
         relay_base = config.relay.base_url
         relay_token = config.relay.token
         path_mappings = config.path_mappings
+        ignore_patterns = config.scan.ignore_patterns
     elif isinstance(cfg_or_path, str):
         # Try loading with new config module first
         try:
@@ -122,6 +124,7 @@ def scan_once(cfg_or_path: Any, dryrun: bool = True) -> dict:
             relay_base = config.relay.base_url
             relay_token = config.relay.token
             path_mappings = config.path_mappings
+            ignore_patterns = config.scan.ignore_patterns
         except Exception:
             # Fall back to legacy dict-based loading (no path_mappings support)
             cfg = _load_cfg_from_path(cfg_or_path)
@@ -133,6 +136,7 @@ def scan_once(cfg_or_path: Any, dryrun: bool = True) -> dict:
             relay_token_env = cfg.get("relay", {}).get("token_env", "RELAY_TOKEN")
             relay_base, relay_token = relay_from_env(relay_base_env, relay_token_env)
             # path_mappings remains empty list for legacy
+            ignore_patterns = cfg.get("scan", {}).get("ignore_patterns", [])
     else:
         # Legacy dict-based config (no path_mappings support)
         cfg = cfg_or_path or {}
@@ -144,6 +148,7 @@ def scan_once(cfg_or_path: Any, dryrun: bool = True) -> dict:
         relay_token_env = cfg.get("relay", {}).get("token_env", "RELAY_TOKEN")
         relay_base, relay_token = relay_from_env(relay_base_env, relay_token_env)
         # path_mappings remains empty list for legacy
+        ignore_patterns = cfg.get("scan", {}).get("ignore_patterns", [])
 
     # Mount checks
     for m in mounts:
@@ -153,6 +158,7 @@ def scan_once(cfg_or_path: Any, dryrun: bool = True) -> dict:
 
     broken = []
     examined = 0
+    skipped_by_ignore = 0
 
     for root in roots:
         if not root:
@@ -161,6 +167,18 @@ def scan_once(cfg_or_path: Any, dryrun: bool = True) -> dict:
         if not root_p.exists():
             continue
         for p in root_p.rglob("*"):
+            # Apply ignore patterns - skip paths that match any pattern
+            path_str = str(p)
+            should_ignore = False
+            for pattern in ignore_patterns:
+                if pattern and pattern in path_str:
+                    should_ignore = True
+                    break
+            
+            if should_ignore:
+                skipped_by_ignore += 1
+                continue
+            
             # only consider files that are symlinks
             try:
                 if not p.is_symlink():
@@ -220,6 +238,7 @@ def scan_once(cfg_or_path: Any, dryrun: bool = True) -> dict:
         "ok": True,
         "broken_count": len(broken),
         "examined": examined,
+        "skipped_by_ignore": skipped_by_ignore,
         "dryrun": dryrun,
         "mount_ok": True
     }
