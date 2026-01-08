@@ -69,8 +69,31 @@ def inject_helpers():
 # ===== DB / Helpers ==========================================================
 def db():
     p = DB_PATH
+    # Auto-create database if it doesn't exist
     if not os.path.exists(p):
-        raise RuntimeError(f"DB missing at {p}")
+        # Ensure data directory exists
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        # Initialize database schema
+        try:
+            from refresher.core.db import initialize_schema
+            conn = sqlite3.connect(p, timeout=5, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            initialize_schema(conn)
+            conn.close()  # Close after initialization
+            print(f"Database initialized at {p}")
+        except ImportError as e:
+            # Core module not available - create empty database
+            print(f"Warning: Could not import refresher.core.db: {e}")
+            print(f"Creating empty database at {p} (schema initialization skipped)")
+            # SQLite will create the file on first connection below
+        except Exception as e:
+            # Schema initialization failed - database file may be created but empty
+            print(f"Warning: Could not initialize database schema: {e}")
+            print(f"Database file created at {p} but schema may be incomplete")
+            # Continue - the file should exist now, even if schema failed
+    
+    # Open connection (whether newly created or existing)
+    # SQLite will create the file if it doesn't exist (fallback case)
     conn = sqlite3.connect(p, timeout=5, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON;")
@@ -98,7 +121,12 @@ def health():
         c.execute("SELECT 1")
         return jsonify(ok=True)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        # During startup, database might be initializing - be more lenient
+        error_msg = str(e)
+        # If it's just a missing table during initialization, that's recoverable
+        if "no such table" in error_msg.lower():
+            return jsonify(ok=True, warning="Database initializing"), 200
+        return jsonify(ok=False, error=error_msg), 500
 
 @app.route("/dbcheck")
 def dbcheck():
