@@ -52,3 +52,6 @@ def orchestrator_toggle(enable: bool = typer.Option(..., "--enable/--disable", h
     print(f"Auto-repair orchestrator: {status}")
     print(f"Updated: {state['updated_utc']}")
 
+if __name__ == "__main__":
+    app()
+
