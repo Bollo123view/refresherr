@@ -671,9 +671,17 @@ pytest --cov=refresher --cov-report=html
 
 # Run specific test file
 pytest tests/test_api_endpoints.py
+
+# Run only unit tests (faster)
+pytest tests/test_queue_repairs.py tests/test_scanner.py
 ```
 
-The backend test suite uses pytest to test API endpoints, configuration loading, and business logic.
+The backend test suite uses pytest to test:
+- **API Endpoints**: Flask routes and responses (15 integration tests)
+- **Business Logic**: Core functions for repairs and scanning (56 unit tests)
+- **Configuration**: YAML loading and validation
+
+**Test Coverage**: Currently ~70% for business logic modules, ~20% overall (many tool modules are tested via integration).
 
 #### Configuration Validation
 

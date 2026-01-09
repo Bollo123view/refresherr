@@ -129,7 +129,20 @@ pytest tests/test_api_endpoints.py
 
 # Run specific test
 pytest tests/test_api_endpoints.py::test_health_endpoint
+
+# Run only unit tests (fast)
+pytest tests/test_queue_repairs.py tests/test_scanner.py
+
+# View coverage report
+open htmlcov/index.html  # macOS
+xdg-open htmlcov/index.html  # Linux
 ```
+
+**Test Coverage Goals:**
+- Aim for 70%+ coverage for core business logic
+- 100% coverage for critical paths (authentication, data integrity)
+- Unit tests should be fast and isolated
+- Integration tests can be slower but should test real workflows
 
 ### Writing Tests
 
@@ -161,7 +174,28 @@ describe('MyComponent', () => {
 - Use pytest fixtures from `conftest.py`
 - Test API endpoints and business logic
 
-Example:
+**Test Types:**
+
+1. **Unit Tests**: Test individual functions in isolation
+   - `test_queue_repairs.py`: Tests for queue_repairs business logic
+   - `test_scanner.py`: Tests for scanner core functions
+   - Focus on pure functions without external dependencies
+
+2. **Integration Tests**: Test API endpoints and database interactions
+   - `test_api_endpoints.py`: Tests for Flask API endpoints
+   - Use Flask test client and temporary databases
+
+**Unit Test Example:**
+```python
+def test_parse_route_map():
+    """Test parsing route mappings."""
+    from refresher.tools.queue_repairs import parse_route_map
+    result = parse_route_map("/opt/media/movies=radarr")
+    assert len(result) == 1
+    assert result[0] == ("/opt/media/movies", "radarr")
+```
+
+**Integration Test Example:**
 ```python
 def test_api_endpoint(client):
     """Test an API endpoint."""
