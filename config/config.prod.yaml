@@ -1,0 +1,94 @@
+# Production Configuration for Refresherr
+# This configuration is optimized for production deployments
+
+# ============================================================================
+# Scanner Configuration - Production
+# ============================================================================
+scan:
+  # Production media roots - customize for your deployment
+  roots:
+    - /opt/media/jelly/tv
+    - /opt/media/jelly/movies
+    - /opt/media/jelly/4k
+  
+  # Verify critical mounts before scanning
+  mount_checks:
+    - /mnt/remote/realdebrid
+  
+  # Standard scan interval (5 minutes)
+  interval: 300
+  
+  # Ignore patterns - IMPORTANT: exclude CineSync folder
+  ignore_patterns:
+    - cinesync
+    - .tmp
+    - .partial
+    - .DS_Store
+    - Thumbs.db
+    - '@eaDir'
+
+# ============================================================================
+# Path Routing Configuration - Production
+# ============================================================================
+routing:
+  # Order by specificity (longest prefix first)
+  - prefix: /opt/media/jelly/4k
+    type: radarr_4k
+  - prefix: /opt/media/jelly/movies
+    type: radarr_movie
+  - prefix: /opt/media/jelly/tv
+    type: sonarr_tv
+
+# ============================================================================
+# Path Mappings - Production
+# ============================================================================
+path_mappings:
+  - container: /opt/media/jelly
+    logical: /mnt/storage/media/jellyfin
+    description: "Jellyfin media library - symlink root"
+  
+  - container: /mnt/remote/realdebrid
+    logical: /mnt/cloud-mounts/realdebrid-vfs
+    description: "RealDebrid rclone mount - actual file storage"
+  
+  - container: /data
+    logical: /opt/refresherr/data
+    description: "Refresherr data directory - database and logs"
+  
+  - container: /config
+    logical: /opt/refresherr/config
+    description: "Refresherr configuration files"
+
+# ============================================================================
+# Relay Service Configuration - Production
+# ============================================================================
+relay:
+  # Load from environment variables for security
+  base_env: RELAY_BASE
+  token_env: RELAY_TOKEN
+
+# ============================================================================
+# Database Configuration - Production
+# ============================================================================
+database:
+  data_dir: /data
+
+# ============================================================================
+# Notification Configuration - Production
+# ============================================================================
+notifications:
+  # Enable notifications in production
+  enabled: true
+  # Discord webhook should be set via DISCORD_WEBHOOK env var
+
+# ============================================================================
+# Production Deployment Notes
+# ============================================================================
+# 1. Set DRYRUN=false after testing to enable repairs
+# 2. Configure proper volume mounts in docker-compose.yml
+# 3. Set secure RELAY_TOKEN and DISCORD_WEBHOOK in .env
+# 4. Ensure all mount_checks paths are accessible
+# 5. Configure Sonarr/Radarr URLs and API keys in .env
+# 6. Review and test routing configuration before going live
+# 7. Monitor logs during initial deployment
+# 8. Set up automated backups of /data directory
