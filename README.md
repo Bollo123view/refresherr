@@ -627,7 +627,7 @@ docker build -t refresherr .
 The dashboard is pre-built and included in the container. To rebuild:
 
 ```bash
-cd dashboard
+cd refresherr-dashboard
 npm install
 npm run build
 ```
@@ -649,8 +649,8 @@ pip install -r requirements.txt
 python app.py
 
 # Terminal 3: React dev server
-cd dashboard
-npm start
+cd refresherr-dashboard
+npm run dev
 ```
 
 ## Contributing
