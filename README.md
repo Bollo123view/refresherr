@@ -634,6 +634,55 @@ npm run build
 
 Built files are automatically copied into the container during image build.
 
+### Testing
+
+Refresherr includes comprehensive test suites for both frontend and backend:
+
+#### Frontend Tests
+
+```bash
+cd refresherr-dashboard
+
+# Run all tests
+npm test
+
+# Run tests in watch mode (for development)
+npm run test:watch
+
+# Generate coverage report
+npm run test:coverage
+```
+
+The frontend test suite uses Vitest and React Testing Library to test React components and user interactions.
+
+#### Backend Tests
+
+```bash
+cd app
+
+# Install test dependencies
+pip install -r requirements-test.txt
+
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=refresher --cov-report=html
+
+# Run specific test file
+pytest tests/test_api_endpoints.py
+```
+
+The backend test suite uses pytest to test API endpoints, configuration loading, and business logic.
+
+#### Configuration Validation
+
+Validate YAML configuration files:
+
+```bash
+python -c "import yaml; yaml.safe_load(open('config/config.yaml'))"
+```
+
 ### Development Mode
 
 Run services separately for development:
@@ -656,10 +705,16 @@ npm run dev
 ## Contributing
 
 Contributions welcome! Please:
-1. Test changes thoroughly in dry-run mode
-2. Follow existing code style
-3. Update documentation for new features
-4. Include tests where applicable
+1. Review [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines
+2. Write tests for new features
+3. Ensure all tests pass before submitting PR
+4. Test changes thoroughly in dry-run mode
+5. Follow existing code style
+6. Update documentation for new features
+
+See also:
+- [CONTRIBUTING.md](CONTRIBUTING.md) - Contribution guidelines and PR process
+- [DEPLOYMENT.md](DEPLOYMENT.md) - Deployment and configuration guide
 
 ## License
 
