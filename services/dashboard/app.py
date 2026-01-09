@@ -5,6 +5,7 @@ from flask import (
     Flask, render_template, request, redirect,
     url_for, flash, jsonify, Blueprint, g, send_from_directory
 )
+from werkzeug.utils import safe_join
 import requests
 
 # Import central config module
@@ -418,8 +419,10 @@ def paginate(q, page, per_page=50):
 def send_frontend(asset_path: str = "index.html"):
     if not os.path.exists(STATIC_DIR):
         return jsonify({"error": "Dashboard assets not built"}), 503
-    if asset_path != "index.html" and os.path.exists(os.path.join(STATIC_DIR, asset_path)):
-        return send_from_directory(STATIC_DIR, asset_path)
+    if asset_path != "index.html":
+        safe_path = safe_join(STATIC_DIR, asset_path)
+        if safe_path and os.path.exists(safe_path):
+            return send_from_directory(STATIC_DIR, asset_path)
     return send_from_directory(STATIC_DIR, "index.html")
 
 # ===== HTML Routes ===========================================================
