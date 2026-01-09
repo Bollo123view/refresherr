@@ -5,7 +5,7 @@ import App from '../../App';
 import * as api from '../../services/api';
 
 // Mock the API module
-vi.mock('../services/api', () => ({
+vi.mock('../../services/api', () => ({
   fetchStats: vi.fn(),
   fetchSymlinks: vi.fn(),
   fetchConfig: vi.fn(),
