@@ -2,7 +2,7 @@ from __future__ import annotations
 import os, sqlite3, math, time, re, sys
 from flask import (
     Flask, render_template, request, redirect,
-    url_for, flash, jsonify, Blueprint
+    url_for, flash, jsonify, Blueprint, g
 )
 import requests
 
@@ -100,6 +100,19 @@ def db():
     conn.execute("PRAGMA busy_timeout=5000;")
     return conn
 
+def get_db():
+    """Get a request-scoped database connection."""
+    if "db" not in g:
+        g.db = db()
+    return g.db
+
+@app.teardown_appcontext
+def close_db(error=None):
+    """Close the database connection after each request."""
+    conn = g.pop("db", None)
+    if conn is not None:
+        conn.close()
+
 def sizeof_fmt(num: int) -> str:
     for unit in ["B","KB","MB","GB","TB"]:
         if num < 1024.0:
@@ -117,7 +130,7 @@ def pick_instance_from_path(p: str) -> str | None:
 @app.route("/health")
 def health():
     try:
-        c = db().cursor()
+        c = get_db().cursor()
         c.execute("SELECT 1")
         return jsonify(ok=True)
     except Exception as e:
@@ -131,7 +144,7 @@ def health():
 @app.route("/dbcheck")
 def dbcheck():
     try:
-        conn = db(); c = conn.cursor()
+        conn = get_db(); c = conn.cursor()
         out = {}
         for name in ("movies","movie_files","series","episode_files","symlinks","actions"):
             try:
@@ -384,7 +397,7 @@ def paginate(q, page, per_page=50):
 # ===== HTML Routes ===========================================================
 @app.route("/")
 def index():
-    conn = db()
+    conn = get_db()
     cur = conn.cursor()
     movies_linked, movies_total, mov_pct, eps_linked, eps_total, eps_pct, broken_count = query_counters(cur)
     return render_template(
@@ -397,7 +410,7 @@ def index():
 
 @app.get("/broken")
 def broken():
-    conn = db(); cur = conn.cursor()
+    conn = get_db(); cur = conn.cursor()
     counters = query_counters(cur)
     raw_items = build_broken_items(conn)
     items = [_unify_item(x) for x in raw_items]
@@ -412,7 +425,7 @@ def broken():
 
 @app.route("/movies")
 def movies():
-    conn = db()
+    conn = get_db()
     q = request.args.get("q","").strip()
     raw_items = build_movie_items(conn, q)
     items = [_unify_item(x) for x in raw_items]
@@ -422,7 +435,7 @@ def movies():
 
 @app.route("/episodes")
 def episodes():
-    conn = db()
+    conn = get_db()
     q = request.args.get("q","").strip()
     raw_items = build_episode_items(conn, q)
     items = [_unify_item(x) for x in raw_items]
@@ -462,7 +475,7 @@ def action_auto():
     else:
         inst = typ
 
-    conn = db(); cur = conn.cursor(); now = int(time.time())
+    conn = get_db(); cur = conn.cursor(); now = int(time.time())
 
     # Unlink safely
     try:
@@ -541,19 +554,19 @@ api = Blueprint("api", __name__, url_prefix="/api")
 
 @api.get("/broken")
 def api_broken():
-    conn = db()
+    conn = get_db()
     items = [_unify_item(x) | {"status": "broken"} for x in build_broken_items(conn)]
     return jsonify(items)
 
 @api.get("/movies")
 def api_movies():
-    conn = db()
+    conn = get_db()
     items = [_unify_item(x) | {"kind": "movie"} for x in build_movie_items(conn, q="")]
     return jsonify(items)
 
 @api.get("/episodes")
 def api_episodes():
-    conn = db()
+    conn = get_db()
     items = [_unify_item(x) | {"kind": "episode"} for x in build_episode_items(conn, q="")]
     return jsonify(items)
 
@@ -644,7 +657,7 @@ def api_stats():
     Expose symlink statistics for dashboard display.
     """
     try:
-        conn = db()
+        conn = get_db()
         cur = conn.cursor()
         movies_linked, movies_total, mov_pct, eps_linked, eps_total, eps_pct, broken_count = query_counters(cur)
         
@@ -882,4 +895,3 @@ app.register_blueprint(api)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT","8088")), debug=False)
-
