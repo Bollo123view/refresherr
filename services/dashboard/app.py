@@ -1,8 +1,9 @@
 from __future__ import annotations
 import os, sqlite3, math, time, re, sys
+import datetime as dt
 from flask import (
     Flask, render_template, request, redirect,
-    url_for, flash, jsonify, Blueprint
+    url_for, flash, jsonify, Blueprint, g, send_from_directory
 )
 import requests
 
@@ -46,7 +47,8 @@ INSTANCE_BY_PREFIX = [
     ("/opt/media/jelly/hayu",   "sonarr_hayu"),
 ]
 
-app = Flask(__name__)
+STATIC_DIR = os.environ.get("DASHBOARD_STATIC_DIR") or os.path.join(os.path.dirname(__file__), "static")
+app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="")
 app.secret_key = os.environ.get("FLASK_SECRET", "refresherr-demo-secret")
 
 # ===== Build/Rev visibility ==================================================
@@ -100,6 +102,19 @@ def db():
     conn.execute("PRAGMA busy_timeout=5000;")
     return conn
 
+def get_db():
+    """Get a request-scoped database connection."""
+    if "db" not in g:
+        g.db = db()
+    return g.db
+
+@app.teardown_appcontext
+def close_db(error=None):
+    """Close the database connection after each request."""
+    conn = g.pop("db", None)
+    if conn is not None:
+        conn.close()
+
 def sizeof_fmt(num: int) -> str:
     for unit in ["B","KB","MB","GB","TB"]:
         if num < 1024.0:
@@ -117,7 +132,7 @@ def pick_instance_from_path(p: str) -> str | None:
 @app.route("/health")
 def health():
     try:
-        c = db().cursor()
+        c = get_db().cursor()
         c.execute("SELECT 1")
         return jsonify(ok=True)
     except Exception as e:
@@ -131,7 +146,7 @@ def health():
 @app.route("/dbcheck")
 def dbcheck():
     try:
-        conn = db(); c = conn.cursor()
+        conn = get_db(); c = conn.cursor()
         out = {}
         for name in ("movies","movie_files","series","episode_files","symlinks","actions"):
             try:
@@ -169,6 +184,24 @@ def query_counters(cur):
     mov_pct = (movies_linked / movies_total * 100.0) if movies_total else 0.0
     eps_pct = (eps_linked / eps_total * 100.0) if eps_total else 0.0
     return movies_linked, movies_total, mov_pct, eps_linked, eps_total, eps_pct, broken_count
+
+def _symlink_columns(conn):
+    try:
+        cols = conn.execute("PRAGMA table_info(symlinks)").fetchall()
+        return {r["name"] for r in cols}
+    except Exception:
+        return set()
+
+def _seen_ts_expr(columns):
+    if "last_seen_ts" in columns:
+        return "COALESCE(last_seen_ts, first_seen_ts, 0)"
+    if "last_seen_utc" in columns:
+        return "COALESCE(strftime('%s', last_seen_utc), strftime('%s', first_seen_utc), 0)"
+    if "first_seen_ts" in columns:
+        return "COALESCE(first_seen_ts, 0)"
+    if "first_seen_utc" in columns:
+        return "COALESCE(strftime('%s', first_seen_utc), 0)"
+    return "0"
 
 # ===== Parsing helpers (TV/movie normalisation) ==============================
 TV_SE_PATTERN = re.compile(r"[Ss](\d{1,2})[ ._-]*[Ee](\d{1,3})")
@@ -220,12 +253,13 @@ def parse_year_from_title(title: str | None):
 
 # ===== Builders shared by HTML + API ========================================
 def build_broken_items(conn):
-    rows = conn.execute("""
+    seen_expr = _seen_ts_expr(_symlink_columns(conn))
+    rows = conn.execute(f"""
         SELECT
             path,
             last_target,
             COALESCE(last_status, status) AS status,
-            COALESCE(last_seen_ts, first_seen_ts, 0) AS seen_ts
+            {seen_expr} AS seen_ts
         FROM symlinks
         WHERE COALESCE(last_status, status)='broken'
         ORDER BY seen_ts DESC, rowid DESC
@@ -381,54 +415,37 @@ def paginate(q, page, per_page=50):
     pages = math.ceil(total/per_page) if per_page else 1
     return items, total, pages
 
+def send_frontend(asset_path: str = "index.html"):
+    if not os.path.exists(STATIC_DIR):
+        return jsonify({"error": "Dashboard assets not built"}), 503
+    if asset_path != "index.html" and os.path.exists(os.path.join(STATIC_DIR, asset_path)):
+        return send_from_directory(STATIC_DIR, asset_path)
+    return send_from_directory(STATIC_DIR, "index.html")
+
 # ===== HTML Routes ===========================================================
 @app.route("/")
 def index():
-    conn = db()
-    cur = conn.cursor()
-    movies_linked, movies_total, mov_pct, eps_linked, eps_total, eps_pct, broken_count = query_counters(cur)
-    return render_template(
-        "index.html",
-        movies_linked=movies_linked, movies_total=movies_total, mov_pct=mov_pct,
-        eps_linked=eps_linked, eps_total=eps_total, eps_pct=eps_pct,
-        broken=broken_count,
-        relay_ok=bool(RELAY_BASE and RELAY_TOKEN)
-    )
+    return send_frontend()
+
+@app.route("/<path:asset_path>")
+def static_proxy(asset_path):
+    if asset_path.startswith("api/"):
+        return jsonify({"error": "Not found"}), 404
+    if asset_path in {"health", "dbcheck"}:
+        return jsonify({"error": "Not found"}), 404
+    return send_frontend(asset_path)
 
 @app.get("/broken")
 def broken():
-    conn = db(); cur = conn.cursor()
-    counters = query_counters(cur)
-    raw_items = build_broken_items(conn)
-    items = [_unify_item(x) for x in raw_items]
-    return render_template(
-        "broken.html",
-        items=items,
-        movies_linked=counters[0], movies_total=counters[1], mov_pct=counters[2],
-        eps_linked=counters[3], eps_total=counters[4], eps_pct=counters[5],
-        broken=counters[6],
-        relay_ok=bool(RELAY_BASE and RELAY_TOKEN)
-    )
+    return send_frontend()
 
 @app.route("/movies")
 def movies():
-    conn = db()
-    q = request.args.get("q","").strip()
-    raw_items = build_movie_items(conn, q)
-    items = [_unify_item(x) for x in raw_items]
-    page = int(request.args.get("page", "1") or "1")
-    page_items, total, pages = paginate(items, page, per_page=50)
-    return render_template("movies.html", items=page_items, total=total, page=page, pages=pages, q=q)
+    return send_frontend()
 
 @app.route("/episodes")
 def episodes():
-    conn = db()
-    q = request.args.get("q","").strip()
-    raw_items = build_episode_items(conn, q)
-    items = [_unify_item(x) for x in raw_items]
-    page = int(request.args.get("page", "1") or "1")
-    page_items, total, pages = paginate(items, page, per_page=50)
-    return render_template("episodes.html", items=page_items, total=total, page=page, pages=pages, q=q)
+    return send_frontend()
 
 # ===== Auto action ===========================================================
 @app.post("/action/auto")
@@ -462,7 +479,7 @@ def action_auto():
     else:
         inst = typ
 
-    conn = db(); cur = conn.cursor(); now = int(time.time())
+    conn = get_db(); cur = conn.cursor(); now = int(time.time())
 
     # Unlink safely
     try:
@@ -475,13 +492,21 @@ def action_auto():
 
     # Mark repairing
     try:
-        cur.execute("""
+        columns = _symlink_columns(conn)
+        updates = ["last_status='repairing'", "last_target=NULL"]
+        values = []
+        if "last_seen_ts" in columns:
+            updates.append("last_seen_ts=?")
+            values.append(now)
+        elif "last_seen_utc" in columns:
+            updates.append("last_seen_utc=?")
+            values.append(dt.datetime.utcnow().isoformat())
+        values.append(path)
+        cur.execute(f"""
             UPDATE symlinks
-               SET last_status='repairing',
-                   last_target=NULL,
-                   last_seen_ts=?
+               SET {", ".join(updates)}
              WHERE path=?
-        """, (now, path))
+        """, values)
         conn.commit()
     except Exception as e:
         flash(f"DB update failed: {e}", "danger")
@@ -541,19 +566,19 @@ api = Blueprint("api", __name__, url_prefix="/api")
 
 @api.get("/broken")
 def api_broken():
-    conn = db()
+    conn = get_db()
     items = [_unify_item(x) | {"status": "broken"} for x in build_broken_items(conn)]
     return jsonify(items)
 
 @api.get("/movies")
 def api_movies():
-    conn = db()
+    conn = get_db()
     items = [_unify_item(x) | {"kind": "movie"} for x in build_movie_items(conn, q="")]
     return jsonify(items)
 
 @api.get("/episodes")
 def api_episodes():
-    conn = db()
+    conn = get_db()
     items = [_unify_item(x) | {"kind": "episode"} for x in build_episode_items(conn, q="")]
     return jsonify(items)
 
@@ -644,7 +669,7 @@ def api_stats():
     Expose symlink statistics for dashboard display.
     """
     try:
-        conn = db()
+        conn = get_db()
         cur = conn.cursor()
         movies_linked, movies_total, mov_pct, eps_linked, eps_total, eps_pct, broken_count = query_counters(cur)
         
@@ -882,4 +907,3 @@ app.register_blueprint(api)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT","8088")), debug=False)
-
