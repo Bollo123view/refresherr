@@ -1,0 +1,74 @@
+# Development Configuration for Refresherr
+# This configuration is optimized for local development and testing
+
+# ============================================================================
+# Scanner Configuration - Development
+# ============================================================================
+scan:
+  # Development scan roots - use smaller test directories
+  roots:
+    - /opt/media/test/tv
+    - /opt/media/test/movies
+  
+  # Skip mount checks in development
+  mount_checks: []
+  
+  # Fast scan interval for development (30 seconds)
+  interval: 30
+  
+  # Ignore patterns
+  ignore_patterns:
+    - cinesync
+    - .tmp
+    - .partial
+    - .test
+
+# ============================================================================
+# Path Routing Configuration - Development
+# ============================================================================
+routing:
+  - prefix: /opt/media/test/movies
+    type: radarr_movie
+  - prefix: /opt/media/test/tv
+    type: sonarr_tv
+
+# ============================================================================
+# Path Mappings - Development
+# ============================================================================
+path_mappings:
+  - container: /opt/media/test
+    logical: /tmp/media-test
+    description: "Test media directory"
+  
+  - container: /data
+    logical: /tmp/refresherr-data
+    description: "Development data directory"
+
+# ============================================================================
+# Relay Service Configuration - Development
+# ============================================================================
+relay:
+  # Use local relay instance
+  base_env: RELAY_BASE
+  token_env: RELAY_TOKEN
+
+# ============================================================================
+# Database Configuration - Development
+# ============================================================================
+database:
+  data_dir: /data
+
+# ============================================================================
+# Notification Configuration - Development
+# ============================================================================
+notifications:
+  # Disable notifications in development
+  enabled: false
+
+# ============================================================================
+# Development Notes
+# ============================================================================
+# 1. Set DRYRUN=true for safe development
+# 2. Use shorter scan intervals for faster feedback
+# 3. Point to test directories instead of production media
+# 4. Disable notifications to avoid spam during testing

@@ -12,15 +12,24 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+*.cover
+.hypothesis/
 
 # Node.js / React
 node_modules/
 dashboard/build/
 dashboard/node_modules/
+refresherr-dashboard/dist/
+refresherr-dashboard/node_modules/
 *.tsbuildinfo
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+package-lock.json
 
 # Docker
 *.tar
@@ -40,8 +49,12 @@ refresherr-*.zip
 *.swo
 *~
 
-# Test scripts
+# Test and coverage artifacts
 test_api.py
+.vitest/
+coverage/
+*.log
+*.lcov
 
 # User config (only sample should be in repo)
 config/config.yaml
