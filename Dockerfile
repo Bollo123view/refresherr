@@ -3,9 +3,9 @@
 FROM node:18-alpine AS dashboard-builder
 
 WORKDIR /dashboard
-COPY dashboard/package*.json ./
-RUN npm ci --only=production
-COPY dashboard/ ./
+COPY refresherr-dashboard/package.json ./
+RUN npm install
+COPY refresherr-dashboard/ ./
 RUN npm run build
 
 # Stage 2: Final unified container
@@ -41,7 +41,7 @@ COPY services/dashboard/templates /app/templates
 COPY services/research-relay/app.py /app/relay_app.py
 
 # Copy built React dashboard
-COPY --from=dashboard-builder /dashboard/build /app/static
+COPY --from=dashboard-builder /dashboard/dist /app/static
 
 # Create entrypoint script with proper error handling and process management
 RUN cat > /app/entrypoint.sh <<'EOF'
