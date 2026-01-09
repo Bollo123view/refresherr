@@ -75,6 +75,8 @@ jobs:
     name: Test Deployment
     needs: build-and-push
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     
     steps:
       - name: Checkout code

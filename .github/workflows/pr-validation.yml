@@ -14,6 +14,8 @@ jobs:
   frontend-tests:
     name: Frontend Tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: ./refresherr-dashboard
@@ -49,6 +51,8 @@ jobs:
   backend-tests:
     name: Backend Tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: ./app
@@ -83,6 +87,8 @@ jobs:
   frontend-build:
     name: Frontend Build Verification
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: ./refresherr-dashboard
@@ -126,6 +132,8 @@ jobs:
   docker-build:
     name: Docker Build Test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     
     steps:
       - name: Checkout code
@@ -173,6 +181,8 @@ jobs:
   config-validation:
     name: Configuration Validation
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     
     steps:
       - name: Checkout code
@@ -197,6 +207,8 @@ jobs:
   lint-check:
     name: Lint and Type Check
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     
     steps:
       - name: Checkout code
@@ -221,6 +233,8 @@ jobs:
   pr-validation-summary:
     name: PR Validation Summary
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     needs: [frontend-tests, backend-tests, frontend-build, docker-build, config-validation]
     if: always()
     
