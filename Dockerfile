@@ -37,7 +37,6 @@ RUN pip install --no-cache-dir \
 # Copy application code
 COPY app/ /app/
 COPY services/dashboard/app.py /app/dashboard_app.py
-COPY services/dashboard/api.py /app/dashboard_api.py
 COPY services/dashboard/templates /app/templates
 COPY services/research-relay/app.py /app/relay_app.py
 
