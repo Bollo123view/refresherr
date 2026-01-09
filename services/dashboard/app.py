@@ -2,7 +2,7 @@ from __future__ import annotations
 import os, sqlite3, math, time, re, sys
 import datetime as dt
 from flask import (
-    Flask, render_template, request, redirect,
+    Flask, request, redirect,
     url_for, flash, jsonify, Blueprint, g, send_from_directory
 )
 from werkzeug.utils import safe_join
